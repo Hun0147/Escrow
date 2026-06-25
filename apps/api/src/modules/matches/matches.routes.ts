@@ -13,27 +13,27 @@ const createSchema = z.object({
   stakeCents: z.number().int().positive(),
 });
 
-matchesRouter.post('/', (req, res) => {
+matchesRouter.post('/', async (req, res, next) => {
   const parsed = createSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const match = createMatch(req.userId!, parsed.data.game, parsed.data.stakeCents);
+    const match = await createMatch(req.userId!, parsed.data.game, parsed.data.stakeCents);
     res.status(201).json(match);
   } catch (err) {
     if (err instanceof MatchError) return res.status(400).json({ error: err.message });
-    throw err;
+    next(err);
   }
 });
 
-matchesRouter.post('/:matchId/fund', (req, res) => {
+matchesRouter.post('/:matchId/fund', async (req, res, next) => {
   try {
-    const result = fundEscrow(req.params.matchId, req.userId!);
+    const result = await fundEscrow(req.params.matchId, req.userId!);
     res.json(result);
   } catch (err) {
     if (err instanceof MatchError || err instanceof WalletError) {
       return res.status(400).json({ error: err.message });
     }
-    throw err;
+    next(err);
   }
 });
 
@@ -41,24 +41,24 @@ matchesRouter.post('/:matchId/fund', (req, res) => {
 // so the winner is supplied explicitly rather than inferred from the caller's identity.
 const settleSchema = z.object({ winnerId: z.string().uuid() });
 
-matchesRouter.post('/:matchId/settle', (req, res) => {
+matchesRouter.post('/:matchId/settle', async (req, res, next) => {
   const parsed = settleSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const result = settleMatch(req.params.matchId, parsed.data.winnerId);
+    const result = await settleMatch(req.params.matchId, parsed.data.winnerId);
     res.json(result);
   } catch (err) {
     if (err instanceof SettlementError) return res.status(400).json({ error: err.message });
-    throw err;
+    next(err);
   }
 });
 
-matchesRouter.post('/:matchId/cancel', (req, res) => {
+matchesRouter.post('/:matchId/cancel', async (req, res, next) => {
   try {
-    const match = cancelMatch(req.params.matchId);
+    const match = await cancelMatch(req.params.matchId);
     res.json(match);
   } catch (err) {
     if (err instanceof MatchError) return res.status(400).json({ error: err.message });
-    throw err;
+    next(err);
   }
 });

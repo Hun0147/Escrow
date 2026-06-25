@@ -11,17 +11,24 @@ real money moves (see "Before going live" below).
 
 ## Structure
 
-- `apps/api` — Express + TypeScript REST API. In-memory store for now
-  (see `src/db/schema.sql` for the Postgres schema to swap in).
+- `apps/api` — Express + TypeScript REST API, backed by Postgres
+  (`src/db/schema.sql`, applied via `npm run migrate --workspace=apps/api`).
 - `apps/web` — Next.js web client.
 - `packages/shared` — shared types and the settlement fee calculation
   (`calculateSettlement`), used by both API and any future client.
 
 ## Running
 
+Requires a running Postgres instance. By default everything points at
+`postgres://escrow:escrow@localhost:5432/escrow` (override with `DATABASE_URL`).
+
 ```bash
+createuser escrow --pwprompt   # if the role doesn't exist yet
+createdb escrow -O escrow
+
 npm install
 npm run build --workspace=packages/shared
+npm run migrate --workspace=apps/api   # applies schema.sql, safe to re-run
 npm run dev:api    # http://localhost:4000
 npm run dev:web    # http://localhost:3000
 ```
@@ -32,7 +39,13 @@ npm run dev:web    # http://localhost:3000
 npm run test --workspace=apps/api
 ```
 
-Covers the settlement math (12% fee) and the end-to-end create → fund → settle flow.
+Runs against the same Postgres database (truncating tables between tests) —
+covers the settlement math (12% fee) and the end-to-end create → fund →
+settle flow against real SQL, not an in-memory stub. Multi-step operations
+(funding, settlement, cancellation) run inside a single DB transaction with
+row locking (`SELECT ... FOR UPDATE`) to stay correct under concurrent
+requests; wallet balance changes are enforced non-negative at the SQL level
+to avoid races.
 
 ## API
 

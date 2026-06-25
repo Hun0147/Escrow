@@ -11,15 +11,15 @@ const openSchema = z.object({
   evidence: z.array(z.string()).default([]),
 });
 
-disputesRouter.post('/', (req, res) => {
+disputesRouter.post('/', async (req, res, next) => {
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const dispute = openDispute(parsed.data.matchId, req.userId!, parsed.data.evidence);
+    const dispute = await openDispute(parsed.data.matchId, req.userId!, parsed.data.evidence);
     res.status(201).json(dispute);
   } catch (err) {
     if (err instanceof DisputeError) return res.status(400).json({ error: err.message });
-    throw err;
+    next(err);
   }
 });
 
@@ -30,14 +30,14 @@ const resolveSchema = z.object({
   winnerId: z.string().uuid().nullable(),
 });
 
-disputesRouter.post('/:disputeId/resolve', (req, res) => {
+disputesRouter.post('/:disputeId/resolve', async (req, res, next) => {
   const parsed = resolveSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const dispute = resolveDispute(req.params.disputeId, parsed.data.resolution, parsed.data.winnerId);
+    const dispute = await resolveDispute(req.params.disputeId, parsed.data.resolution, parsed.data.winnerId);
     res.json(dispute);
   } catch (err) {
     if (err instanceof DisputeError) return res.status(400).json({ error: err.message });
-    throw err;
+    next(err);
   }
 });

@@ -1,27 +1,19 @@
 import { calculateSettlement } from '@escrow/shared';
-import { store } from '../../db/store';
+import { pool } from '../../db/pool';
+import { createUser } from '../../db/users.repo';
 import { createMatch, fundEscrow } from '../matches/matches.service';
 import { settleMatch, SettlementError } from './settlement.service';
+import { findUserById } from '../../db/users.repo';
+import { findMatchById } from '../../db/matches.repo';
+import { findEscrowByMatchId } from '../../db/escrows.repo';
 import { deposit } from '../wallet/wallet.service';
 
-function makeUser(id: string) {
-  store.users.set(id, {
-    id,
-    email: `${id}@example.com`,
-    passwordHash: 'x',
-    psnId: null,
-    walletBalanceCents: 0,
-    kycStatus: 'approved',
-    createdAt: new Date().toISOString(),
-  });
-}
+beforeEach(async () => {
+  await pool.query('TRUNCATE TABLE disputes, transactions, escrows, matches, users CASCADE');
+});
 
-beforeEach(() => {
-  store.users.clear();
-  store.matches.clear();
-  store.escrows.clear();
-  store.transactions.clear();
-  store.disputes.clear();
+afterAll(async () => {
+  await pool.end();
 });
 
 describe('calculateSettlement', () => {
@@ -41,33 +33,30 @@ describe('calculateSettlement', () => {
   });
 });
 
-describe('settleMatch end-to-end', () => {
-  it('pays the winner the pool minus 12% and zeroes out the escrow', () => {
-    makeUser('11111111-1111-1111-1111-111111111111');
-    makeUser('22222222-2222-2222-2222-222222222222');
-    const creator = '11111111-1111-1111-1111-111111111111';
-    const opponent = '22222222-2222-2222-2222-222222222222';
+describe('settleMatch end-to-end (against real Postgres)', () => {
+  it('pays the winner the pool minus 12% and zeroes out the escrow', async () => {
+    const creator = await createUser({ email: 'creator@example.com', passwordHash: 'x' });
+    const opponent = await createUser({ email: 'opponent@example.com', passwordHash: 'x' });
 
-    deposit(creator, 10000);
-    deposit(opponent, 10000);
+    await deposit(creator.id, 10000);
+    await deposit(opponent.id, 10000);
 
-    const match = createMatch(creator, 'EA Sports FC 26', 10000);
-    fundEscrow(match.id, creator);
-    fundEscrow(match.id, opponent);
+    const match = await createMatch(creator.id, 'EA Sports FC 26', 10000);
+    await fundEscrow(match.id, creator.id);
+    await fundEscrow(match.id, opponent.id);
 
-    const result = settleMatch(match.id, creator);
+    const result = await settleMatch(match.id, creator.id);
 
     expect(result.payoutCents).toBe(17600);
     expect(result.platformFeeCents).toBe(2400);
-    expect(store.users.get(creator)!.walletBalanceCents).toBe(17600);
-    expect(store.matches.get(match.id)!.status).toBe('settled');
-    expect(store.escrowByMatchId(match.id)!.status).toBe('released');
+    expect((await findUserById(creator.id))!.walletBalanceCents).toBe(17600);
+    expect((await findMatchById(match.id))!.status).toBe('settled');
+    expect((await findEscrowByMatchId(match.id))!.status).toBe('released');
   });
 
-  it('refuses to settle an unfunded match', () => {
-    makeUser('33333333-3333-3333-3333-333333333333');
-    const creator = '33333333-3333-3333-3333-333333333333';
-    const match = createMatch(creator, 'NBA 2K', 5000);
-    expect(() => settleMatch(match.id, creator)).toThrow(SettlementError);
+  it('refuses to settle an unfunded match', async () => {
+    const creator = await createUser({ email: 'solo@example.com', passwordHash: 'x' });
+    const match = await createMatch(creator.id, 'NBA 2K', 5000);
+    await expect(settleMatch(match.id, creator.id)).rejects.toThrow(SettlementError);
   });
 });

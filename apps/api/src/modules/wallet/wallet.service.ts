@@ -1,58 +1,47 @@
-import { v4 as uuid } from 'uuid';
-import { store } from '../../db/store';
+import { Pool, PoolClient } from 'pg';
+import { adjustBalance, findUserById, InsufficientBalanceError } from '../../db/users.repo';
+import { recordTransaction } from '../../db/transactions.repo';
+
+type Queryable = Pool | PoolClient;
 
 export class WalletError extends Error {}
 
-function getUserOrThrow(userId: string) {
-  const user = store.users.get(userId);
-  if (!user) throw new WalletError('User not found');
-  return user;
-}
-
-export function deposit(userId: string, amountCents: number) {
+export async function deposit(userId: string, amountCents: number): Promise<number> {
   if (amountCents <= 0) throw new WalletError('Deposit must be positive');
-  const user = getUserOrThrow(userId);
-  user.walletBalanceCents += amountCents;
-  recordTransaction(userId, 'deposit', amountCents);
-  return user.walletBalanceCents;
+  if (!(await findUserById(userId))) throw new WalletError('User not found');
+  const balance = await adjustBalance(userId, amountCents);
+  await recordTransaction({ userId, type: 'deposit', amountCents });
+  return balance;
 }
 
-export function withdraw(userId: string, amountCents: number) {
+export async function withdraw(userId: string, amountCents: number): Promise<number> {
   if (amountCents <= 0) throw new WalletError('Withdrawal must be positive');
-  const user = getUserOrThrow(userId);
-  if (user.walletBalanceCents < amountCents) throw new WalletError('Insufficient balance');
-  user.walletBalanceCents -= amountCents;
-  recordTransaction(userId, 'withdrawal', amountCents);
-  return user.walletBalanceCents;
+  try {
+    const balance = await adjustBalance(userId, -amountCents);
+    await recordTransaction({ userId, type: 'withdrawal', amountCents });
+    return balance;
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) throw new WalletError('Insufficient balance');
+    throw err;
+  }
 }
 
-export function lockForEscrow(userId: string, amountCents: number) {
-  const user = getUserOrThrow(userId);
-  if (user.walletBalanceCents < amountCents) throw new WalletError('Insufficient balance to fund escrow');
-  user.walletBalanceCents -= amountCents;
-  recordTransaction(userId, 'escrow_lock', amountCents);
+export async function lockForEscrow(userId: string, amountCents: number, matchId: string, db: Queryable): Promise<void> {
+  try {
+    await adjustBalance(userId, -amountCents, db);
+  } catch (err) {
+    if (err instanceof InsufficientBalanceError) throw new WalletError('Insufficient balance to fund escrow');
+    throw err;
+  }
+  await recordTransaction({ userId, matchId, type: 'escrow_lock', amountCents }, db);
 }
 
-export function creditPayout(userId: string, amountCents: number) {
-  const user = getUserOrThrow(userId);
-  user.walletBalanceCents += amountCents;
-  recordTransaction(userId, 'escrow_release', amountCents);
+export async function creditPayout(userId: string, amountCents: number, matchId: string, db: Queryable): Promise<void> {
+  await adjustBalance(userId, amountCents, db);
+  await recordTransaction({ userId, matchId, type: 'escrow_release', amountCents }, db);
 }
 
-export function refund(userId: string, amountCents: number) {
-  const user = getUserOrThrow(userId);
-  user.walletBalanceCents += amountCents;
-  recordTransaction(userId, 'refund', amountCents);
-}
-
-function recordTransaction(userId: string, type: 'deposit' | 'withdrawal' | 'escrow_lock' | 'escrow_release' | 'refund', amountCents: number) {
-  const id = uuid();
-  store.transactions.set(id, {
-    id,
-    userId,
-    type,
-    amountCents,
-    status: 'completed',
-    createdAt: new Date().toISOString(),
-  });
+export async function refund(userId: string, amountCents: number, matchId: string, db: Queryable): Promise<void> {
+  await adjustBalance(userId, amountCents, db);
+  await recordTransaction({ userId, matchId, type: 'refund', amountCents }, db);
 }
