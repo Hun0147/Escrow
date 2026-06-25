@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { requireAuth } from '../../common/auth-middleware';
 import { DisputeError, openDispute, resolveDispute } from './disputes.service';
 
 export const disputesRouter = Router();
+disputesRouter.use(requireAuth);
 
 const openSchema = z.object({
   matchId: z.string().uuid(),
-  raisedBy: z.string().uuid(),
   evidence: z.array(z.string()).default([]),
 });
 
@@ -14,7 +15,7 @@ disputesRouter.post('/', (req, res) => {
   const parsed = openSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
   try {
-    const dispute = openDispute(parsed.data.matchId, parsed.data.raisedBy, parsed.data.evidence);
+    const dispute = openDispute(parsed.data.matchId, req.userId!, parsed.data.evidence);
     res.status(201).json(dispute);
   } catch (err) {
     if (err instanceof DisputeError) return res.status(400).json({ error: err.message });
@@ -22,6 +23,8 @@ disputesRouter.post('/', (req, res) => {
   }
 });
 
+// Resolution is moderator-only in practice; role-based access control is not yet
+// implemented (Phase 1 has no roles), so this currently trusts any authenticated caller.
 const resolveSchema = z.object({
   resolution: z.string().min(1),
   winnerId: z.string().uuid().nullable(),

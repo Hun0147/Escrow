@@ -5,7 +5,7 @@ import { useState } from 'react';
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 export default function Home() {
-  const [creatorId, setCreatorId] = useState('');
+  const [token, setToken] = useState('');
   const [game, setGame] = useState('EA Sports FC 26');
   const [stake, setStake] = useState(50);
   const [result, setResult] = useState<unknown>(null);
@@ -16,8 +16,8 @@ export default function Home() {
     setResult(null);
     const res = await fetch(`${API_URL}/matches`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ creatorId, game, stakeCents: Math.round(stake * 100) }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ game, stakeCents: Math.round(stake * 100) }),
     });
     const data = await res.json();
     if (!res.ok) setError(JSON.stringify(data.error));
@@ -35,8 +35,8 @@ export default function Home() {
         Platform escrow fee: 12% of the prize pool, deducted from the winner's payout at settlement.
       </p>
 
-      <label>Creator User ID</label>
-      <input value={creatorId} onChange={(e) => setCreatorId(e.target.value)} style={inputStyle} placeholder="uuid" />
+      <label>Auth Token (from /auth/register or /auth/login)</label>
+      <input value={token} onChange={(e) => setToken(e.target.value)} style={inputStyle} placeholder="eyJ..." />
 
       <label>Game</label>
       <input value={game} onChange={(e) => setGame(e.target.value)} style={inputStyle} />

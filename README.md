@@ -36,19 +36,24 @@ Covers the settlement math (12% fee) and the end-to-end create → fund → sett
 
 ## API
 
+`/auth/*` is open. Every other route requires `Authorization: Bearer <token>`,
+where the token comes from `/auth/register` or `/auth/login`. The
+authenticated user's id is used as the acting identity (depositor, match
+creator, funder, dispute raiser) — it is never taken from the request body.
+
 | Method | Path                          | Purpose                          |
 |--------|-------------------------------|-----------------------------------|
-| POST   | `/auth/register`              | Create user                       |
-| POST   | `/auth/login`                 | Authenticate                      |
-| POST   | `/wallet/deposit`              | Add funds to wallet                |
-| POST   | `/wallet/withdraw`             | Withdraw funds                     |
-| GET    | `/wallet/:userId/balance`      | Get balance                        |
-| POST   | `/matches`                     | Create a wager                     |
-| POST   | `/matches/:id/fund`            | Lock a player's stake into escrow  |
-| POST   | `/matches/:id/settle`          | Release payout to winner (12% fee) |
+| POST   | `/auth/register`              | Create user, returns `{ user, token }` |
+| POST   | `/auth/login`                 | Authenticate, returns `{ user, token }` |
+| POST   | `/wallet/deposit`              | Add funds to caller's wallet       |
+| POST   | `/wallet/withdraw`             | Withdraw funds from caller's wallet|
+| GET    | `/wallet/balance`              | Get caller's balance               |
+| POST   | `/matches`                     | Create a wager (caller is creator) |
+| POST   | `/matches/:id/fund`            | Lock caller's stake into escrow    |
+| POST   | `/matches/:id/settle`          | Release payout to winner (12% fee) — moderator-triggered, winner given explicitly |
 | POST   | `/matches/:id/cancel`          | Cancel and refund                  |
-| POST   | `/disputes`                    | Raise a dispute                    |
-| POST   | `/disputes/:id/resolve`        | Manual moderator resolution        |
+| POST   | `/disputes`                    | Raise a dispute (caller is the raiser) |
+| POST   | `/disputes/:id/resolve`        | Manual moderator resolution — not yet role-restricted |
 
 ## Before going live
 
