@@ -3,6 +3,7 @@ import { UserRow, findUserById } from '../../db/repos/users.repo';
 import { matchmakingQueue } from '../../queue/matchmaking';
 import { badRequest, notFound } from '../../common/errors';
 import { createMatch, joinMatch } from '../matches/matches.service';
+import { isPro } from '../subscriptions/subscriptions.service';
 import { notify } from '../notifications/notifications.service';
 import { realtime } from '../../realtime/bus';
 
@@ -34,6 +35,7 @@ export async function quickMatch(user: UserRow, input: QuickMatchInput): Promise
     stakeCents: input.stakeCents,
     gameMode: input.gameMode,
     skillTier: user.skillTier,
+    priority: await isPro(user.id),
     enqueuedAt: Date.now(),
   };
 

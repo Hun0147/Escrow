@@ -6,6 +6,7 @@ import { badRequest } from '../../common/errors';
 import * as admin from './admin.service';
 import { drainOcrQueue } from '../../queue/ocr-worker';
 import { sweepLapsedMatches } from '../results/results.service';
+import { sweepRenewals } from '../subscriptions/subscriptions.service';
 
 export const adminRouter = Router();
 adminRouter.use(requireAuth, requireRole('moderator', 'admin'));
@@ -122,6 +123,13 @@ adminRouter.post(
   '/jobs/ocr',
   handler(async (_req, res) => {
     res.json({ processed: await drainOcrQueue() });
+  }),
+);
+
+adminRouter.post(
+  '/jobs/renew-subscriptions',
+  handler(async (_req, res) => {
+    res.json(await sweepRenewals());
   }),
 );
 

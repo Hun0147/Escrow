@@ -1,8 +1,10 @@
 import { drainOcrQueue } from './ocr-worker';
 import { sweepLapsedMatches } from '../modules/results/results.service';
+import { sweepRenewals } from '../modules/subscriptions/subscriptions.service';
 
 const OCR_INTERVAL_MS = 2_000;
 const DEADLINE_INTERVAL_MS = 30_000;
+const RENEWAL_INTERVAL_MS = 300_000;
 
 /**
  * Background jobs.
@@ -25,6 +27,15 @@ export function startWorkers(): () => void {
       const escalated = await sweepLapsedMatches();
       if (escalated.length > 0) {
         console.log(`Escalated ${escalated.length} match(es) past their reporting deadline`);
+      }
+    }),
+  );
+
+  timers.push(
+    loop(RENEWAL_INTERVAL_MS, async () => {
+      const { renewed, closed } = await sweepRenewals();
+      if (renewed.length || closed.length) {
+        console.log(`Subscriptions: ${renewed.length} renewed, ${closed.length} closed`);
       }
     }),
   );

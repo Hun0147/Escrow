@@ -51,6 +51,7 @@ export type LedgerTransactionType =
   | 'refund'
   | 'tournament_entry'
   | 'tournament_prize'
+  | 'subscription_fee'
   | 'adjustment';
 
 export type DisputeStatus = 'open' | 'under_review' | 'resolved' | 'auto_resolved';
@@ -87,6 +88,19 @@ export type NotificationType =
   | 'wallet_debited'
   | 'kyc_updated'
   | 'tournament_started';
+
+export type SubscriptionStatus = 'active' | 'cancelling' | 'cancelled' | 'lapsed';
+
+export interface Subscription {
+  id: string;
+  userId: string;
+  tier: 'pro';
+  status: SubscriptionStatus;
+  priceCents: number;
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  createdAt: string;
+}
 
 export type TournamentStatus = 'registering' | 'running' | 'completed' | 'cancelled';
 

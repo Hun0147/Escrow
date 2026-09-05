@@ -6,6 +6,7 @@ import { getWallet } from '../db/repos/ledger.repo';
 import { findMatchById } from '../db/repos/matches.repo';
 import { listChatMessages } from '../db/repos/misc.repo';
 import { ROOM, realtime } from './bus';
+import { closeSession, openSession } from './session-clock';
 
 /**
  * Socket.io gateway.
@@ -43,6 +44,7 @@ export function attachRealtime(server: HttpServer): Server {
     const userId: string = socket.data.userId;
     socket.join(ROOM.user(userId));
     socket.join(ROOM.lobby);
+    void openSession(userId);
 
     void getWallet(userId).then((wallet) => {
       if (wallet) socket.emit('wallet:updated', wallet);
@@ -74,6 +76,7 @@ export function attachRealtime(server: HttpServer): Server {
     // can show "opponent lost connection" and offer to raise a dispute rather
     // than leaving someone staring at a dead chat.
     socket.on('disconnect', () => {
+      closeSession(userId);
       const matchId: string | undefined = socket.data.matchId;
       if (matchId) {
         socket.to(ROOM.match(matchId)).emit('presence:disconnected', {

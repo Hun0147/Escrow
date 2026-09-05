@@ -13,6 +13,8 @@ export interface QueueTicket {
   stakeCents: number;
   gameMode: GameMode;
   skillTier: string;
+  /** Pro subscribers are matched ahead of free accounts at the same stake. */
+  priority: boolean;
   enqueuedAt: number;
 }
 
@@ -43,9 +45,7 @@ class MemoryQueue implements MatchmakingQueue {
 
   async takeOpponent(ticket: QueueTicket): Promise<QueueTicket | null> {
     const bucket = this.buckets.get(keyFor(ticket)) ?? [];
-    // Longest wait first: nobody should sit in the queue while later arrivals
-    // get matched around them.
-    const index = bucket.findIndex((entry) => entry.userId !== ticket.userId);
+    const index = bestCandidateIndex(bucket, ticket.userId);
     if (index === -1) return null;
     const [opponent] = bucket.splice(index, 1);
     return opponent;
@@ -66,6 +66,31 @@ class MemoryQueue implements MatchmakingQueue {
   }
 }
 
+/**
+ * Picks who gets matched next: Pro subscribers first, then longest wait.
+ *
+ * Within a tier it is strictly first-in-first-out, so nobody sits in the queue
+ * while later arrivals are matched around them.
+ */
+export function bestCandidateIndex(bucket: QueueTicket[], excludeUserId: string): number {
+  let best = -1;
+  for (let i = 0; i < bucket.length; i++) {
+    const candidate = bucket[i];
+    if (candidate.userId === excludeUserId) continue;
+    if (best === -1) {
+      best = i;
+      continue;
+    }
+    const incumbent = bucket[best];
+    if (candidate.priority !== incumbent.priority) {
+      if (candidate.priority) best = i;
+    } else if (candidate.enqueuedAt < incumbent.enqueuedAt) {
+      best = i;
+    }
+  }
+  return best;
+}
+
 class RedisQueue implements MatchmakingQueue {
   readonly kind = 'redis';
   constructor(private readonly client: any) {}
@@ -83,14 +108,12 @@ class RedisQueue implements MatchmakingQueue {
   async takeOpponent(ticket: QueueTicket): Promise<QueueTicket | null> {
     const key = this.key(ticket);
     const entries: string[] = await this.client.lRange(key, 0, -1);
-    for (const raw of entries) {
-      const candidate: QueueTicket = JSON.parse(raw);
-      if (candidate.userId === ticket.userId) continue;
-      await this.client.lRem(key, 1, raw);
-      await this.client.hDel('goal27:queue:index', candidate.userId);
-      return candidate;
-    }
-    return null;
+    const tickets: QueueTicket[] = entries.map((raw) => JSON.parse(raw));
+    const index = bestCandidateIndex(tickets, ticket.userId);
+    if (index === -1) return null;
+    await this.client.lRem(key, 1, entries[index]);
+    await this.client.hDel('goal27:queue:index', tickets[index].userId);
+    return tickets[index];
   }
 
   async remove(userId: string): Promise<void> {

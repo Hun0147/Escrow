@@ -37,6 +37,7 @@ import { getSetting } from '../../common/settings';
 import { notify } from '../notifications/notifications.service';
 import { realtime } from '../../realtime/bus';
 import { settleMatch } from '../settlement/settlement.service';
+import { isPro } from '../subscriptions/subscriptions.service';
 import { recordTrustEvent, recomputeTrustScore } from '../trust/trust.service';
 
 export interface CreateMatchInput {
@@ -61,7 +62,9 @@ export async function createMatch(user: UserRow, input: CreateMatchInput): Promi
   const rules = normaliseRules(input.rules);
   await assertWithinLossLimit(user.id, input.stakeCents);
 
-  const rakeBps = rakeForMatch(user.subscriptionTier === 'pro', false);
+  // Read the live subscription rather than the cached tier flag, so a lapsed
+  // subscription cannot keep earning the discount until the renewal sweep runs.
+  const rakeBps = rakeForMatch(await isPro(user.id), false);
 
   const match = await withTransaction(async (client) => {
     const created = await insertMatch(
@@ -141,8 +144,7 @@ export async function joinMatch(user: UserRow, matchId: string): Promise<Match> 
 
     // The Pro rake discount applies if either player subscribes, so it can only
     // be settled once both are known.
-    const creator = await findUserById(locked.creatorId, client);
-    const rakeBps = rakeForMatch(creator?.subscriptionTier === 'pro', user.subscriptionTier === 'pro');
+    const rakeBps = rakeForMatch(await isPro(locked.creatorId), await isPro(user.id));
     await client.query('UPDATE matches SET rake_bps = $2 WHERE id = $1', [locked.id, rakeBps]);
 
     return updateMatch(

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { Subscription } from '@escrow/shared';
 import { ApiError, api } from '../../lib/api';
 import { formatCents } from '../../lib/format';
 import { useRequireSession } from '../../components/SessionProvider';
@@ -17,11 +18,36 @@ const EXCLUSION_CHOICES = [1, 7, 30, 90, 365];
  * irreversible for its term. The copy says so plainly, because a limit a
  * player believes they can undo in the moment is not a limit.
  */
+interface SubscriptionState {
+  subscription: Subscription | null;
+  priceCents: number;
+  periodDays: number;
+}
+
 export default function SettingsPage() {
   const { user, loading, refresh } = useRequireSession();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
+  const [pro, setPro] = useState<SubscriptionState | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    void api<SubscriptionState>('/subscription').then(setPro);
+  }, [user?.id]);
+
+  async function changeSubscription(method: 'POST' | 'DELETE', message: string) {
+    setError(null);
+    setNotice(null);
+    try {
+      await api('/subscription', { method, body: method === 'POST' ? {} : undefined });
+      setNotice(message);
+      setPro(await api<SubscriptionState>('/subscription'));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update your subscription');
+    }
+  }
 
   async function save(body: unknown, message: string) {
     setError(null);
@@ -50,6 +76,54 @@ export default function SettingsPage() {
 
       {error ? <div className="mb-3"><Banner tone="danger">{error}</Banner></div> : null}
       {notice ? <div className="mb-3"><Banner tone="good">{notice}</Banner></div> : null}
+
+      <section className="card mb-3 border-volt/30">
+        <div className="flex items-baseline justify-between">
+          <p className="label mb-0">Goal 27 Pro</p>
+          {pro ? (
+            <span className="font-display text-lg font-black tabular-nums text-volt">
+              {formatCents(pro.priceCents)}
+              <span className="text-xs font-semibold text-slate-500">/{pro.periodDays}d</span>
+            </span>
+          ) : null}
+        </div>
+        <ul className="mt-2 space-y-1 text-sm text-slate-400">
+          <li>· Rake drops from 10% to 7% on every match you play</li>
+          <li>· Priority in the matchmaking queue at every stake</li>
+        </ul>
+
+        {pro?.subscription ? (
+          <>
+            <p className="mt-3 text-sm font-semibold text-volt">
+              {pro.subscription.status === 'cancelling'
+                ? `Ends ${new Date(pro.subscription.currentPeriodEnd).toLocaleDateString()} — you keep Pro until then.`
+                : `Renews ${new Date(pro.subscription.currentPeriodEnd).toLocaleDateString()}.`}
+            </p>
+            <button
+              className={pro.subscription.status === 'cancelling' ? 'btn-primary mt-3 w-full' : 'btn-ghost mt-3 w-full'}
+              onClick={() =>
+                pro.subscription!.status === 'cancelling'
+                  ? changeSubscription('POST', 'Cancellation called off — Pro continues.')
+                  : changeSubscription('DELETE', 'Pro will end when the current period does.')
+              }
+            >
+              {pro.subscription.status === 'cancelling' ? 'Resume Pro' : 'Cancel Pro'}
+            </button>
+          </>
+        ) : (
+          <button
+            className="btn-primary mt-3 w-full"
+            disabled={!pro}
+            onClick={() => changeSubscription('POST', 'Goal 27 Pro is live.')}
+          >
+            {pro ? `Subscribe for ${formatCents(pro.priceCents)}` : 'Loading…'}
+          </button>
+        )}
+        <p className="mt-2 text-[11px] text-slate-500">
+          Charged from your wallet balance. It renews automatically, and lapses rather than
+          overdrawing you if the balance is short.
+        </p>
+      </section>
 
       <section className="card mb-3">
         <p className="label">Daily deposit limit</p>

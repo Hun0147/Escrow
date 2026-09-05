@@ -15,6 +15,7 @@ const SEED_SQL = readFileSync(
 
 
 const TABLES = [
+  'subscriptions',
   'admin_actions',
   'fraud_flags',
   'payment_intents',

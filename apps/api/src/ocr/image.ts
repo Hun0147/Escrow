@@ -1,22 +1,28 @@
 import { inflateSync } from 'zlib';
+import { decode as decodeJpegBuffer } from 'jpeg-js';
 import { GrayscaleImage, toGrayscale } from '@escrow/shared';
 
 /**
- * Minimal image decoding, enough to feed the perceptual hash.
+ * Image decoding for the perceptual hash.
  *
- * Only PNG is decoded natively (non-interlaced, 8-bit, the format the web
- * uploader produces). JPEG — what a PS5 share export actually is — needs a
- * real decoder; `decodeToGrayscale` returns null for anything it cannot read
- * and callers fall back to content hashing alone, which still catches an
- * exact re-upload. Wiring in a JPEG decoder is a drop-in here and nowhere else.
+ * PNG is decoded here (the format the web uploader produces); JPEG — what a
+ * PS5 share export actually is — goes through jpeg-js, which is a pure-JS
+ * baseline and progressive decoder with no native build step. Anything else
+ * returns null and the caller falls back to content hashing alone, which still
+ * catches an exact re-upload but not a re-encode.
  */
 export function decodeToGrayscale(buffer: Buffer, contentType: string): GrayscaleImage | null {
-  if (contentType === 'image/png' || isPng(buffer)) {
-    try {
-      return decodePng(buffer);
-    } catch {
-      return null;
-    }
+  // Sniff the magic bytes rather than trusting the declared content type: an
+  // uploader that mislabels a JPEG as a PNG should not slip past the duplicate
+  // check by accident, or on purpose.
+  try {
+    if (isPng(buffer)) return decodePng(buffer);
+    if (isJpeg(buffer)) return decodeJpeg(buffer);
+    // Fall back to the declared type when the header is unrecognised.
+    if (contentType === 'image/png') return decodePng(buffer);
+    if (contentType === 'image/jpeg' || contentType === 'image/jpg') return decodeJpeg(buffer);
+  } catch {
+    return null;
   }
   return null;
 }
@@ -28,6 +34,27 @@ function isPng(buffer: Buffer): boolean {
     buffer[1] === 0x50 &&
     buffer[2] === 0x4e &&
     buffer[3] === 0x47
+  );
+}
+
+function isJpeg(buffer: Buffer): boolean {
+  return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+}
+
+/** Guards against a decompression bomb: a small file that claims a huge
+ *  canvas would otherwise allocate gigabytes inside the worker. */
+const MAX_PIXELS = 40_000_000;
+
+function decodeJpeg(buffer: Buffer): GrayscaleImage {
+  const decoded = decodeJpegBuffer(buffer, {
+    useTArray: true,
+    maxMemoryUsageInMB: 256,
+    maxResolutionInMP: MAX_PIXELS / 1_000_000,
+  });
+  return toGrayscale(
+    new Uint8Array(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
+    decoded.width,
+    decoded.height,
   );
 }
 
@@ -71,6 +98,7 @@ function decodePng(buffer: Buffer): GrayscaleImage {
   }
 
   if (!header) throw new Error('PNG has no header chunk');
+  if (header.width * header.height > MAX_PIXELS) throw new Error('PNG is implausibly large');
   if (header.bitDepth !== 8) throw new Error(`Unsupported PNG bit depth ${header.bitDepth}`);
   if (header.interlace !== 0) throw new Error('Interlaced PNG is not supported');
 

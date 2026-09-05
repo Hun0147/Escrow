@@ -8,6 +8,7 @@ import { matchesRouter } from './modules/matches/matches.routes';
 import { disputesRouter, evidenceRouter } from './modules/disputes/disputes.routes';
 import { tournamentsRouter } from './modules/tournaments/tournaments.routes';
 import { adminRouter } from './modules/admin/admin.routes';
+import { subscriptionRouter } from './modules/subscriptions/subscriptions.routes';
 
 export function createApp() {
   const app = express();
@@ -41,6 +42,7 @@ export function createApp() {
   app.use('/me', meRouter);
   app.use('/users', usersRouter);
   app.use('/wallet', walletRouter);
+  app.use('/subscription', subscriptionRouter);
   app.use('/matches', matchesRouter);
   app.use('/disputes', disputesRouter);
   app.use('/evidence', evidenceRouter);

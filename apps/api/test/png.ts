@@ -1,4 +1,5 @@
 import { deflateSync } from 'zlib';
+import { encode as encodeJpegBuffer } from 'jpeg-js';
 
 /**
  * Minimal PNG encoder for tests, so the perceptual-hash and OCR pipeline can
@@ -67,10 +68,35 @@ function crc32(buffer: Buffer): number {
 /** A deterministic "scoreboard-ish" image: bands and blocks, not noise, so
  *  downscaling it is stable the way a real screenshot is. */
 export function scoreboardImage(width = 96, height = 64, seed = 1): Buffer {
-  return encodePng(width, height, (x, y) => {
-    const band = Math.floor((y / height) * 8);
-    const cell = Math.floor((x / width) * 8);
-    const value = ((band * 31 + cell * 17 + seed * 53) % 200) + 20;
-    return [value, (value + 40) % 255, (value + 90) % 255];
-  });
+  return encodePng(width, height, (x, y) => scoreboardPixel(x, y, width, height, seed));
+}
+
+/** The same deterministic scoreboard, encoded as JPEG — what a PS5 share
+ *  export actually is. `quality` lets a test simulate a re-encode. */
+export function scoreboardJpeg(width = 96, height = 64, seed = 1, quality = 85): Buffer {
+  const data = Buffer.alloc(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const [r, g, b] = scoreboardPixel(x, y, width, height, seed);
+      const offset = (y * width + x) * 4;
+      data[offset] = r;
+      data[offset + 1] = g;
+      data[offset + 2] = b;
+      data[offset + 3] = 255;
+    }
+  }
+  return Buffer.from(encodeJpegBuffer({ data, width, height }, quality).data);
+}
+
+function scoreboardPixel(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  seed: number,
+): [number, number, number] {
+  const band = Math.floor((y / height) * 8);
+  const cell = Math.floor((x / width) * 8);
+  const value = ((band * 31 + cell * 17 + seed * 53) % 200) + 20;
+  return [value, (value + 40) % 255, (value + 90) % 255];
 }

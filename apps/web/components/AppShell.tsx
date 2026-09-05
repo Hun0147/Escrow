@@ -1,9 +1,15 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { formatCents } from '../lib/format';
 import { useSession } from './SessionProvider';
+
+interface SessionReminder {
+  elapsedMinutes: number;
+  intervalMinutes: number;
+}
 
 const NAV = [
   { href: '/lobby', label: 'Lobby', glyph: '⚽' },
@@ -21,9 +27,21 @@ const NAV = [
  * match they have money in.
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, wallet, notifications } = useSession();
+  const { user, wallet, notifications, socket } = useSession();
   const pathname = usePathname();
   const unread = notifications.filter((n) => !n.readAt).length;
+  const [reminder, setReminder] = useState<SessionReminder | null>(null);
+
+  // A responsible-play nudge the player asked for. It is dismissible but not
+  // silenceable from here — turning it off is a deliberate trip to settings.
+  useEffect(() => {
+    if (!socket) return;
+    const onReminder = (payload: SessionReminder) => setReminder(payload);
+    socket.on('session:reminder', onReminder);
+    return () => {
+      socket.off('session:reminder', onReminder);
+    };
+  }, [socket]);
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col">
@@ -65,6 +83,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>
         ) : null}
       </header>
+
+      {reminder ? (
+        <div className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-sm text-amber-100">
+          <div className="flex items-start justify-between gap-3">
+            <p>
+              You have been playing for{' '}
+              <span className="font-semibold">{reminder.elapsedMinutes} minutes</span>. Take a break
+              if you want one —{' '}
+              <Link href="/settings" className="underline">
+                limits and cool-off
+              </Link>{' '}
+              are in settings.
+            </p>
+            <button
+              className="shrink-0 text-xs font-bold uppercase tracking-wider"
+              onClick={() => setReminder(null)}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <main className="flex-1 px-4 pb-28 pt-4">{children}</main>
 

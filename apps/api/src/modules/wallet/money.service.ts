@@ -330,6 +330,35 @@ export async function refundTournamentEntry(
   await adjustWallet(userId, { availableCents: amountCents, lockedCents: -amountCents }, db);
 }
 
+/** Charges a subscription period out of the player's wallet. */
+export async function chargeSubscription(
+  db: Queryable,
+  userId: string,
+  amountCents: number,
+  memo: string,
+): Promise<void> {
+  if (amountCents === 0) return;
+  try {
+    await adjustWallet(userId, { availableCents: -amountCents }, db);
+  } catch (err) {
+    if (err instanceof InsufficientFundsError) {
+      throw new WalletError('insufficient_funds', 'Not enough balance to cover the subscription');
+    }
+    throw err;
+  }
+  await postTransaction(
+    {
+      type: 'subscription_fee',
+      userId,
+      memo,
+      entries: [
+        { debitAccount: userAvailable(userId), creditAccount: PLATFORM_REVENUE, amountCents },
+      ],
+    },
+    db,
+  );
+}
+
 export function assertPositiveAmount(amountCents: number, label: string): void {
   if (!Number.isInteger(amountCents) || amountCents <= 0) {
     throw badRequest('invalid_amount', `${label} must be a positive whole number of cents`);

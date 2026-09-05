@@ -22,6 +22,8 @@ export const SETTING_DEFAULTS = {
   match_start_countdown_seconds: 120,
   min_age: 18,
   kyc_required_before_withdrawal: true,
+  pro_subscription_cents: 999,
+  pro_subscription_days: 30,
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;

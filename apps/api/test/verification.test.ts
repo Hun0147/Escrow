@@ -8,7 +8,7 @@ import {
 } from '@escrow/shared';
 import { decodeToGrayscale } from '../src/ocr/image';
 import { SidecarOcrEngine } from '../src/ocr/engine';
-import { encodePng, scoreboardImage } from './png';
+import { encodePng, scoreboardImage, scoreboardJpeg } from './png';
 import { makeUser, ULTIMATE_TEAM } from './factories';
 import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
 import { uploadScreenshot } from '../src/modules/screenshots/screenshots.service';
@@ -48,6 +48,41 @@ describe('perceptual hashing', () => {
 
   it('refuses to compare hashes of different lengths', () => {
     expect(() => hammingDistance('abcd', 'abcdef')).toThrow(/same length/);
+  });
+
+  it('decodes a JPEG — the format a PS5 share export actually is', () => {
+    const gray = decodeToGrayscale(scoreboardJpeg(96, 64), 'image/jpeg');
+    expect(gray).not.toBeNull();
+    expect(gray!.width).toBe(96);
+    expect(gray!.height).toBe(64);
+  });
+
+  it('matches a JPEG re-encode of the same screenshot across quality settings', () => {
+    const original = decodeToGrayscale(scoreboardJpeg(192, 128, 4, 92), 'image/jpeg')!;
+    const recompressed = decodeToGrayscale(scoreboardJpeg(96, 64, 4, 55), 'image/jpeg')!;
+    expect(hammingDistance(dHash(original), dHash(recompressed))).toBeLessThanOrEqual(
+      DUPLICATE_HAMMING_THRESHOLD,
+    );
+  });
+
+  it('lands a JPEG and a PNG of the same screen on the same hash', () => {
+    const png = decodeToGrayscale(scoreboardImage(96, 64, 6), 'image/png')!;
+    const jpeg = decodeToGrayscale(scoreboardJpeg(96, 64, 6, 90), 'image/jpeg')!;
+    expect(hammingDistance(dHash(png), dHash(jpeg))).toBeLessThanOrEqual(
+      DUPLICATE_HAMMING_THRESHOLD,
+    );
+  });
+
+  it('sniffs the real format rather than trusting the declared content type', () => {
+    // A JPEG mislabelled as a PNG must still be hashed, not silently skipped.
+    const gray = decodeToGrayscale(scoreboardJpeg(64, 48), 'image/png');
+    expect(gray).not.toBeNull();
+    expect(gray!.width).toBe(64);
+  });
+
+  it('returns null rather than throwing on bytes it cannot read', () => {
+    expect(decodeToGrayscale(Buffer.from('not an image at all'), 'image/png')).toBeNull();
+    expect(decodeToGrayscale(Buffer.alloc(0), 'image/jpeg')).toBeNull();
   });
 
   it('decodes a real PNG down to luminance', () => {
@@ -222,6 +257,28 @@ describe('screenshot pipeline', () => {
 
     const flags = await listOpenFraudFlags();
     expect(flags.map((f) => f.kind)).toContain('duplicate_screenshot');
+  });
+
+  it('catches a JPEG re-upload of an earlier screenshot', async () => {
+    const first = await playersAndMatch();
+    await uploadScreenshot(first.creator, {
+      matchId: first.match.id,
+      contentType: 'image/jpeg',
+      dataBase64: upload(scoreboardJpeg(192, 128, 13, 90), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    const second = await createMatch(first.creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(first.opponent, second.id);
+    // Rescaled and recompressed: different bytes, different sha256, same match.
+    const reused = await uploadScreenshot(first.creator, {
+      matchId: second.id,
+      contentType: 'image/jpeg',
+      dataBase64: upload(scoreboardJpeg(96, 64, 13, 60), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    expect((await findScreenshotById(reused.id))!.verdict).toBe('duplicate');
   });
 
   it('catches a crop of an earlier screenshot, not just an identical file', async () => {
