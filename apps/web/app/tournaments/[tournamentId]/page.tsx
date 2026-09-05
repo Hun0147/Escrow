@@ -16,7 +16,7 @@ interface TournamentDetail {
   bracket: BracketSlot[];
   entrants: number;
   poolCents: number;
-  rakeCents: number;
+  feeCents: number;
   prizeCents: number;
 }
 
@@ -57,7 +57,7 @@ export default function TournamentPage() {
           <span>
             {detail.entrants} × {formatCents(detail.tournament.entryFeeCents)} entry
           </span>
-          <span>rake {formatCents(detail.rakeCents)}</span>
+          <span>escrow fee {formatCents(detail.feeCents)}</span>
         </div>
         {myEntry ? (
           <p className="mt-3 text-sm font-semibold text-volt">

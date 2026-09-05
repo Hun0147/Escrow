@@ -17,7 +17,7 @@ function mapTournament(row: any): Tournament {
     name: row.name,
     gameMode: row.game_mode,
     entryFeeCents: Number(row.entry_fee_cents),
-    rakeBps: row.rake_bps,
+    escrowFeeBps: row.escrow_fee_bps,
     maxEntrants: row.max_entrants,
     status: row.status,
     rules: normaliseRules(row.rules ?? {}),
@@ -32,7 +32,7 @@ export async function insertTournament(
     name: string;
     gameMode: GameMode;
     entryFeeCents: number;
-    rakeBps: number;
+    escrowFeeBps: number;
     maxEntrants: number;
     rules: MatchRules;
     sponsorName?: string | null;
@@ -41,13 +41,13 @@ export async function insertTournament(
   db: Queryable = pool,
 ): Promise<Tournament> {
   const { rows } = await db.query(
-    `INSERT INTO tournaments (name, game_mode, entry_fee_cents, rake_bps, max_entrants, rules, sponsor_name, starts_at)
+    `INSERT INTO tournaments (name, game_mode, entry_fee_cents, escrow_fee_bps, max_entrants, rules, sponsor_name, starts_at)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) RETURNING *`,
     [
       params.name,
       params.gameMode,
       params.entryFeeCents,
-      params.rakeBps,
+      params.escrowFeeBps,
       params.maxEntrants,
       JSON.stringify(params.rules),
       params.sponsorName ?? null,
@@ -252,7 +252,7 @@ export async function setSlotWinner(
  * Per-stake-tier leaderboard.
  *
  * Net is computed from the ledger rather than from a win counter, so it is the
- * player's actual profit after rake — the number they care about.
+ * player's actual profit after the escrow fee — the number they care about.
  */
 export async function leaderboardForStake(
   stakeCents: number,

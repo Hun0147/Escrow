@@ -6,7 +6,6 @@ import {
   PublicUser,
   isStakeTier,
   normaliseRules,
-  rakeForMatch,
   settlementPolicyFor,
 } from '@escrow/shared';
 import { withTransaction } from '../../db/transaction';
@@ -34,6 +33,7 @@ import { lockStake, refundSingleStake } from '../wallet/money.service';
 import { assertWithinLossLimit } from '../wallet/wallet.service';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
 import { getSetting } from '../../common/settings';
+import { escrowFeeBpsFor } from '../../common/fees';
 import { notify } from '../notifications/notifications.service';
 import { realtime } from '../../realtime/bus';
 import { settleMatch } from '../settlement/settlement.service';
@@ -64,7 +64,7 @@ export async function createMatch(user: UserRow, input: CreateMatchInput): Promi
 
   // Read the live subscription rather than the cached tier flag, so a lapsed
   // subscription cannot keep earning the discount until the renewal sweep runs.
-  const rakeBps = rakeForMatch(await isPro(user.id), false);
+  const escrowFeeBps = await escrowFeeBpsFor(await isPro(user.id));
 
   const match = await withTransaction(async (client) => {
     const created = await insertMatch(
@@ -73,7 +73,7 @@ export async function createMatch(user: UserRow, input: CreateMatchInput): Promi
         game: input.game ?? 'EA Sports FC 26',
         gameMode: input.gameMode,
         stakeCents: input.stakeCents,
-        rakeBps,
+        escrowFeeBps,
         rules,
       },
       client,
@@ -102,7 +102,7 @@ export async function joinMatch(user: UserRow, matchId: string): Promise<Match> 
   }
 
   // Self-matching between linked accounts turns the platform into a money
-  // mover: lose on purpose, and the only cost is the rake. The check runs
+  // mover: lose on purpose, and the only cost is the fee. The check runs
   // before the money transaction so the flag survives the rejection — rolling
   // it back with the failed join would erase the evidence.
   const link = await assessAccountLink(user.id, target.creatorId);
@@ -142,10 +142,15 @@ export async function joinMatch(user: UserRow, matchId: string): Promise<Match> 
     await assertWithinLossLimit(user.id, locked.stakeCents);
     await lockStake(client, user.id, locked.id, locked.stakeCents);
 
-    // The Pro rake discount applies if either player subscribes, so it can only
-    // be settled once both are known.
-    const rakeBps = rakeForMatch(await isPro(locked.creatorId), await isPro(user.id));
-    await client.query('UPDATE matches SET rake_bps = $2 WHERE id = $1', [locked.id, rakeBps]);
+    // The Pro discount applies if either player subscribes, so the rate can
+    // only be settled once both are known.
+    const escrowFeeBps = await escrowFeeBpsFor(
+      (await isPro(locked.creatorId)) || (await isPro(user.id)),
+    );
+    await client.query('UPDATE matches SET escrow_fee_bps = $2 WHERE id = $1', [
+      locked.id,
+      escrowFeeBps,
+    ]);
 
     return updateMatch(
       locked.id,

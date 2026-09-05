@@ -1,4 +1,4 @@
-import { BracketSlot, Match } from '@escrow/shared';
+import { BracketSlot, Match, feeOn } from '@escrow/shared';
 import { withTransaction } from '../../db/transaction';
 import { insertMatch, updateMatch } from '../../db/repos/matches.repo';
 import {
@@ -18,7 +18,7 @@ import { getWallet } from '../../db/repos/ledger.repo';
 import {
   payTournamentPrize,
   releaseTournamentLock,
-  takeTournamentRake,
+  takeTournamentEscrowFee,
 } from '../wallet/money.service';
 import { badRequest, conflict, notFound } from '../../common/errors';
 import { notify } from '../notifications/notifications.service';
@@ -106,7 +106,7 @@ async function createFixture(tournamentId: string, slot: BracketSlot): Promise<M
     game: 'EA Sports FC 26',
     gameMode: tournament.gameMode,
     stakeCents: 0,
-    rakeBps: 0,
+    escrowFeeBps: 0,
     rules: tournament.rules,
     tournamentId,
     tournamentRound: slot.round,
@@ -174,24 +174,24 @@ async function maybeAdvanceRound(tournamentId: string, round: number): Promise<v
 /**
  * Pays the prize pool out.
  *
- * MVP payout structure is winner-take-all after rake. A places table (70/20/10
- * and so on) is a change to `prizeSplit` alone — the escrow mechanics do not
- * care how many people are paid.
+ * MVP payout structure is winner-take-all after the escrow fee. A places
+ * table (70/20/10 and so on) is a change to `prizeSplit` alone — the escrow
+ * mechanics do not care how many people are paid.
  */
 export async function completeTournament(tournamentId: string, championId: string): Promise<void> {
   const tournament = await findTournamentById(tournamentId);
   if (!tournament) throw notFound('Tournament');
   const entrants = await listEntries(tournamentId);
   const poolCents = tournament.entryFeeCents * entrants.length;
-  const rakeCents = Math.round((poolCents * tournament.rakeBps) / 10000);
-  const prizeCents = poolCents - rakeCents;
+  const feeCents = feeOn(poolCents, tournament.escrowFeeBps);
+  const prizeCents = poolCents - feeCents;
 
   await withTransaction(async (client) => {
     // Every entrant's fee stops being "locked" the moment the pool is paid.
     for (const entry of entrants) {
       await releaseTournamentLock(client, entry.userId, tournament.entryFeeCents);
     }
-    await takeTournamentRake(client, tournamentId, rakeCents);
+    await takeTournamentEscrowFee(client, tournamentId, feeCents);
     await payTournamentPrize(client, tournamentId, championId, prizeCents);
     await client.query('UPDATE tournaments SET status = $2 WHERE id = $1', [tournamentId, 'completed']);
   });
@@ -219,8 +219,8 @@ export async function prizePreview(tournamentId: string) {
   if (!tournament) throw notFound('Tournament');
   const entrants = await countEntries(tournamentId);
   const poolCents = tournament.entryFeeCents * entrants;
-  const rakeCents = Math.round((poolCents * tournament.rakeBps) / 10000);
-  return { entrants, poolCents, rakeCents, prizeCents: poolCents - rakeCents };
+  const feeCents = feeOn(poolCents, tournament.escrowFeeBps);
+  return { entrants, poolCents, feeCents, prizeCents: poolCents - feeCents };
 }
 
 function nextPowerOfTwo(value: number): number {

@@ -23,7 +23,7 @@ export async function recordDevice(input: DeviceFingerprintInput, db: Queryable 
  *
  * This is the self-matching check: two accounts run by the same person can
  * otherwise "play" each other, lose on purpose, and use the platform to move
- * money around at the cost of only the rake.
+ * money around at the cost of only the escrow fee.
  */
 export interface LinkedAccount {
   userId: string;

@@ -16,7 +16,7 @@ export const matchEscrow = (matchId: string) => `escrow:match:${matchId}`;
 /** A player's entry fee, held for one tournament. */
 export const tournamentEscrow = (tournamentId: string) => `escrow:tournament:${tournamentId}`;
 
-/** Where rake accrues. */
+/** Where the escrow fee accrues. */
 export const PLATFORM_REVENUE = 'platform:revenue';
 
 /**

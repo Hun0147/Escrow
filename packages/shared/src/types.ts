@@ -47,7 +47,7 @@ export type LedgerTransactionType =
   | 'withdrawal'
   | 'escrow_lock'
   | 'escrow_payout'
-  | 'platform_rake'
+  | 'escrow_fee'
   | 'refund'
   | 'tournament_entry'
   | 'tournament_prize'
@@ -186,7 +186,8 @@ export interface Match {
   game: string;
   gameMode: GameMode;
   stakeCents: number;
-  rakeBps: number;
+  /** The escrow fee this match carries, in basis points. */
+  escrowFeeBps: number;
   rules: MatchRules;
   status: MatchStatus;
   escrowStatus: EscrowStatus;
@@ -293,7 +294,7 @@ export interface Tournament {
   name: string;
   gameMode: GameMode;
   entryFeeCents: number;
-  rakeBps: number;
+  escrowFeeBps: number;
   maxEntrants: number;
   status: TournamentStatus;
   rules: MatchRules;

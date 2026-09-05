@@ -1,4 +1,4 @@
-import { PLATFORM_REVENUE, PRO_RAKE_BPS, DEFAULT_RAKE_BPS } from '@escrow/shared';
+import { PLATFORM_REVENUE, DEFAULT_ESCROW_FEE_BPS } from '@escrow/shared';
 import { makeUser, ULTIMATE_TEAM } from './factories';
 import { cancel, isPro, status, subscribe, sweepRenewals } from '../src/modules/subscriptions/subscriptions.service';
 import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
@@ -112,7 +112,7 @@ describe('Goal 27 Pro', () => {
   });
 });
 
-describe('the Pro rake discount', () => {
+describe('the Pro escrow-fee discount', () => {
   it('applies when either player subscribes, and pays the winner more', async () => {
     const creator = await makeUser({ balanceCents: 10000, trustScore: 90 });
     const opponent = await makeUser({ balanceCents: 10000, trustScore: 90 });
@@ -123,7 +123,7 @@ describe('the Pro rake discount', () => {
       stakeCents: 2500,
     });
     // The creator is free, so the match starts at the standard rake…
-    expect(match.rakeBps).toBe(DEFAULT_RAKE_BPS);
+    expect(match.escrowFeeBps).toBe(DEFAULT_ESCROW_FEE_BPS);
 
     await joinMatch((await findUserById(opponent.id))!, match.id);
     await submitResult(creator, { matchId: match.id, selfScore: 2, opponentScore: 0 });
@@ -147,7 +147,7 @@ describe('the Pro rake discount', () => {
       gameMode: ULTIMATE_TEAM,
       stakeCents: 1000,
     });
-    expect(match.rakeBps).toBe(DEFAULT_RAKE_BPS);
+    expect(match.escrowFeeBps).toBe(DEFAULT_ESCROW_FEE_BPS);
   });
 });
 

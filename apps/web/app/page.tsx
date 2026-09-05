@@ -75,7 +75,7 @@ export default function SplashPage() {
       <div className="mb-5 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-400">
         <div className="card px-2 py-3">
           <div className="font-display text-lg font-black text-volt">10%</div>
-          rake, 7% on Pro
+          escrow fee, 7% on Pro
         </div>
         <div className="card px-2 py-3">
           <div className="font-display text-lg font-black text-volt">$5+</div>

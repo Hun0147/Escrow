@@ -265,7 +265,7 @@ async function resolveBothReports(
     detail:
       verdict.outcome === 'draw'
         ? 'Draw — both stakes returned in full.'
-        : `Settled: ${settled.payoutCents} cents paid out after a ${settled.platformFeeCents} cent rake.`,
+        : `Settled: ${settled.payoutCents} cents paid out after a ${settled.platformFeeCents} cent escrow fee.`,
   };
 }
 

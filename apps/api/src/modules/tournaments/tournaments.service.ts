@@ -15,6 +15,7 @@ import { getWallet } from '../../db/repos/ledger.repo';
 import { chargeTournamentEntry, refundTournamentEntry } from '../wallet/money.service';
 import { assertWithinLossLimit } from '../wallet/wallet.service';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
+import { escrowFeeBpsFor } from '../../common/fees';
 import { realtime } from '../../realtime/bus';
 import { prizePreview } from './bracket.service';
 
@@ -22,7 +23,7 @@ export interface CreateTournamentInput {
   name: string;
   gameMode: GameMode;
   entryFeeCents: number;
-  rakeBps?: number;
+  escrowFeeBps?: number;
   maxEntrants: number;
   rules?: Partial<MatchRules>;
   sponsorName?: string | null;
@@ -38,7 +39,7 @@ export async function createTournament(input: CreateTournamentInput): Promise<To
     name: input.name,
     gameMode: input.gameMode,
     entryFeeCents: input.entryFeeCents,
-    rakeBps: input.rakeBps ?? 1000,
+    escrowFeeBps: input.escrowFeeBps ?? (await escrowFeeBpsFor(false)),
     maxEntrants: input.maxEntrants,
     rules: normaliseRules(input.rules),
     sponsorName: input.sponsorName ?? null,

@@ -54,31 +54,124 @@ export async function creditDeposit(
   await adjustWallet(userId, { availableCents: amountCents }, db);
 }
 
+export interface WithdrawalPosting {
+  grossCents: number;
+  feeCents: number;
+  netCents: number;
+}
+
+/**
+ * Debits a withdrawal and takes the escrow fee out of it.
+ *
+ * The gross leaves the wallet once, but it is booked as two movements: the net
+ * to the outside world, and the fee to platform revenue. Two ledger
+ * transactions rather than one, so a player's statement shows the payout and
+ * the charge as separate lines instead of a single number they have to work
+ * backwards from.
+ */
 export async function debitWithdrawal(
   db: Queryable,
   userId: string,
-  amountCents: number,
+  breakdown: WithdrawalPosting,
   memo: string,
 ): Promise<void> {
+  const { grossCents, feeCents, netCents } = breakdown;
+  if (netCents + feeCents !== grossCents) {
+    throw new Error('Withdrawal breakdown does not add up');
+  }
+
   try {
-    await adjustWallet(userId, { availableCents: -amountCents }, db);
+    await adjustWallet(userId, { availableCents: -grossCents }, db);
   } catch (err) {
     if (err instanceof InsufficientFundsError) {
       throw new WalletError('insufficient_funds', 'Insufficient available balance');
     }
     throw err;
   }
+
   await postTransaction(
     {
       type: 'withdrawal',
       userId,
       memo,
       entries: [
-        { debitAccount: userAvailable(userId), creditAccount: EXTERNAL_SETTLEMENT, amountCents },
+        {
+          debitAccount: userAvailable(userId),
+          creditAccount: EXTERNAL_SETTLEMENT,
+          amountCents: netCents,
+        },
       ],
     },
     db,
   );
+
+  if (feeCents > 0) {
+    await postTransaction(
+      {
+        type: 'escrow_fee',
+        userId,
+        memo: `Escrow fee on ${memo}`,
+        entries: [
+          {
+            debitAccount: userAvailable(userId),
+            creditAccount: PLATFORM_REVENUE,
+            amountCents: feeCents,
+          },
+        ],
+      },
+      db,
+    );
+  }
+}
+
+/**
+ * Undoes a withdrawal the provider refused.
+ *
+ * Both halves are reversed, the fee included: the platform must not keep a
+ * charge for moving money it never moved.
+ */
+export async function reverseWithdrawal(
+  db: Queryable,
+  userId: string,
+  breakdown: WithdrawalPosting,
+  memo: string,
+): Promise<void> {
+  const { grossCents, feeCents, netCents } = breakdown;
+  await adjustWallet(userId, { availableCents: grossCents }, db);
+
+  await postTransaction(
+    {
+      type: 'refund',
+      userId,
+      memo,
+      entries: [
+        {
+          debitAccount: EXTERNAL_SETTLEMENT,
+          creditAccount: userAvailable(userId),
+          amountCents: netCents,
+        },
+      ],
+    },
+    db,
+  );
+
+  if (feeCents > 0) {
+    await postTransaction(
+      {
+        type: 'refund',
+        userId,
+        memo: `Escrow fee refunded on ${memo}`,
+        entries: [
+          {
+            debitAccount: PLATFORM_REVENUE,
+            creditAccount: userAvailable(userId),
+            amountCents: feeCents,
+          },
+        ],
+      },
+      db,
+    );
+  }
 }
 
 /** Moves a player's stake out of their spendable balance and into match escrow. */
@@ -115,7 +208,7 @@ export interface ReleaseParams {
   winnerId: string;
   loserId: string;
   stakeCents: number;
-  rakeBps: number;
+  escrowFeeBps: number;
 }
 
 export interface ReleaseResult {
@@ -125,7 +218,7 @@ export interface ReleaseResult {
 }
 
 /**
- * Releases a fully funded escrow to the winner and takes the rake.
+ * Releases a fully funded escrow to the winner and takes the escrow fee.
  *
  * The escrow account is drained to exactly zero: payout + fee == both stakes,
  * by construction of `calculateSettlement`.
@@ -137,7 +230,7 @@ export async function releaseEscrowToWinner(
   const { grossPoolCents, platformFeeCents, payoutCents } = calculateSettlement(
     params.stakeCents,
     params.stakeCents,
-    params.rakeBps,
+    params.escrowFeeBps,
   );
   const escrow = matchEscrow(params.matchId);
 
@@ -153,7 +246,7 @@ export async function releaseEscrowToWinner(
       type: 'escrow_payout',
       userId: params.winnerId,
       matchId: params.matchId,
-      memo: `Payout ${payoutCents} + rake ${platformFeeCents} of pool ${grossPoolCents}`,
+      memo: `Payout ${payoutCents} + escrow fee ${platformFeeCents} of pool ${grossPoolCents}`,
       entries,
     },
     db,
@@ -172,7 +265,7 @@ export async function releaseEscrowToWinner(
 }
 
 /** Returns both stakes in full — a draw, a mutual cancel, or a void ruling.
- *  No rake is taken: the house does not profit from a match that didn't
+ *  No fee is taken: the house does not profit from a match that didn't
  *  produce a result. */
 export async function refundEscrow(
   db: Queryable,
@@ -242,7 +335,7 @@ export async function chargeTournamentEntry(
   );
 }
 
-/** Pays a placing player out of the tournament escrow, net of rake. */
+/** Pays a placing player out of the tournament escrow, net of the fee. */
 export async function payTournamentPrize(
   db: Queryable,
   tournamentId: string,
@@ -269,8 +362,8 @@ export async function payTournamentPrize(
   await adjustWallet(userId, { availableCents: amountCents }, db);
 }
 
-/** Moves the tournament's rake out of escrow and into platform revenue. */
-export async function takeTournamentRake(
+/** Moves the tournament's escrow fee out of escrow and into platform revenue. */
+export async function takeTournamentEscrowFee(
   db: Queryable,
   tournamentId: string,
   amountCents: number,
@@ -278,9 +371,9 @@ export async function takeTournamentRake(
   if (amountCents <= 0) return;
   await postTransaction(
     {
-      type: 'platform_rake',
+      type: 'escrow_fee',
       tournamentId,
-      memo: 'Tournament rake',
+      memo: 'Tournament escrow fee',
       entries: [
         {
           debitAccount: tournamentEscrow(tournamentId),

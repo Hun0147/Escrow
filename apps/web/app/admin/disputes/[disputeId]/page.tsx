@@ -32,7 +32,7 @@ interface CaseFile {
 const RESOLUTIONS: { value: DisputeResolution; label: string; hint: string; tone: string }[] = [
   { value: 'creator_wins', label: 'Creator wins', hint: 'Release the pool to the match creator', tone: 'btn-primary' },
   { value: 'opponent_wins', label: 'Opponent wins', hint: 'Release the pool to the opponent', tone: 'btn-primary' },
-  { value: 'void_refund', label: 'Void and refund', hint: 'Return both stakes, take no rake', tone: 'btn-ghost' },
+  { value: 'void_refund', label: 'Void and refund', hint: 'Return both stakes, take no fee', tone: 'btn-ghost' },
   { value: 'replay', label: 'Order a replay', hint: 'Refund both and let them run it back', tone: 'btn-ghost' },
   { value: 'dismissed', label: 'Dismiss', hint: 'Reopen reporting with a fresh deadline', tone: 'btn-ghost' },
 ];
@@ -81,7 +81,7 @@ export default function DisputeCasePage() {
 
   const { match, creator, opponent, results, screenshots, chat, history, dispute } = file;
   const pool = match.stakeCents * 2;
-  const rake = Math.round((pool * match.rakeBps) / 10000);
+  const fee = Math.round((pool * match.escrowFeeBps) / 10000);
 
   const reportFor = (userId: string) => results.find((result) => result.reporterId === userId) ?? null;
   const historyFor = (userId: string) => history.find((entry) => entry.userId === userId);
@@ -121,8 +121,8 @@ export default function DisputeCasePage() {
           <span className="stake">{formatCents(pool)}</span>
         </div>
         <p className="text-xs text-slate-500">
-          {formatCents(match.stakeCents)} each · rake {formatCents(rake)} · winner takes{' '}
-          {formatCents(pool - rake)}
+          {formatCents(match.stakeCents)} each · escrow fee {formatCents(fee)} · winner takes{' '}
+          {formatCents(pool - fee)}
         </p>
         <p className="mt-2 text-xs text-slate-400">{describeRules(match.rules)}</p>
         {match.rules.notes ? <p className="text-xs text-slate-300">“{match.rules.notes}”</p> : null}

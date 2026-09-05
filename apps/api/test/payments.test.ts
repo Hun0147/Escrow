@@ -14,7 +14,8 @@ import {
 } from '../src/payments';
 import { StripePaymentProvider } from '../src/payments/stripe';
 import { deposit, captureDeposit, handlePaymentWebhook, withdraw } from '../src/modules/wallet/wallet.service';
-import { getWallet, reconcileWallets } from '../src/db/repos/ledger.repo';
+import { PLATFORM_REVENUE } from '@escrow/shared';
+import { accountBalance, getWallet, reconcileWallets } from '../src/db/repos/ledger.repo';
 import { findPaymentIntent, listOpenFraudFlags } from '../src/db/repos/fraud.repo';
 import { findUserById } from '../src/db/repos/users.repo';
 import { pool } from '../src/db/pool';
@@ -245,8 +246,11 @@ describe('deposits with a deferred provider', () => {
     const user = await makeUser({ balanceCents: 5000, kycApproved: true });
     provider.payoutSettles = false;
 
-    const wallet = await withdraw({ user, amountCents: 2000, method: 'stripe' });
-    expect(wallet.availableCents).toBe(3000);
+    const result = await withdraw({ user, amountCents: 2000, method: 'stripe' });
+    // $20 leaves the wallet; $2 is the escrow fee, $18 is what the payout moves.
+    expect(result.wallet.availableCents).toBe(3000);
+    expect(result.feeCents).toBe(200);
+    expect(result.netCents).toBe(1800);
     // Debited and reserved, but the intent stays open until the payout settles.
     const { rows } = await pool.query(
       "SELECT status FROM payment_intents WHERE user_id = $1 AND direction = 'withdrawal'",
@@ -261,8 +265,11 @@ describe('deposits with a deferred provider', () => {
     provider.failPayout = true;
 
     await expect(withdraw({ user, amountCents: 2000, method: 'stripe' })).rejects.toThrow(/declined/);
-    // The debit posted before the provider call, so it has to be reversed.
+    // The debit posted before the provider call, so it has to be reversed —
+    // including the fee, which the platform has no claim to on a transfer that
+    // never happened.
     expect((await getWallet(user.id))!.availableCents).toBe(5000);
+    expect(await accountBalance(PLATFORM_REVENUE)).toBe(0);
     expect(await reconcileWallets()).toEqual([]);
   });
 

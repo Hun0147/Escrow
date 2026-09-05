@@ -36,7 +36,7 @@ export default function LeaderboardsPage() {
     <AppShell>
       <h1 className="mb-1 font-display text-2xl font-black">Leaderboards</h1>
       <p className="mb-4 text-sm text-slate-400">
-        Ranked by net profit after rake, not by wins — this is what you actually took home.
+        Ranked by net profit after the escrow fee, not by wins — this is what you actually took home.
       </p>
 
       <div className="mb-4 flex flex-wrap gap-2">

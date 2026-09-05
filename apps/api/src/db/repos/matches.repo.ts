@@ -19,7 +19,7 @@ export function mapMatch(row: any): Match {
     game: row.game,
     gameMode: row.game_mode,
     stakeCents: Number(row.stake_cents),
-    rakeBps: row.rake_bps,
+    escrowFeeBps: row.escrow_fee_bps,
     rules: normaliseRules(row.rules ?? {}),
     status: row.status,
     escrowStatus: row.escrow_status,
@@ -41,7 +41,7 @@ export interface CreateMatchParams {
   game: string;
   gameMode: GameMode;
   stakeCents: number;
-  rakeBps: number;
+  escrowFeeBps: number;
   rules: MatchRules;
   tournamentId?: string | null;
   tournamentRound?: number | null;
@@ -49,7 +49,7 @@ export interface CreateMatchParams {
 
 export async function insertMatch(params: CreateMatchParams, db: Queryable = pool): Promise<Match> {
   const { rows } = await db.query(
-    `INSERT INTO matches (creator_id, game, game_mode, stake_cents, rake_bps, rules,
+    `INSERT INTO matches (creator_id, game, game_mode, stake_cents, escrow_fee_bps, rules,
                           tournament_id, tournament_round)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) RETURNING *`,
     [
@@ -57,7 +57,7 @@ export async function insertMatch(params: CreateMatchParams, db: Queryable = poo
       params.game,
       params.gameMode,
       params.stakeCents,
-      params.rakeBps,
+      params.escrowFeeBps,
       JSON.stringify(params.rules),
       params.tournamentId ?? null,
       params.tournamentRound ?? null,

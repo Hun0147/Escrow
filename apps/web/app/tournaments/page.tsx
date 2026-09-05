@@ -13,7 +13,7 @@ interface TournamentCard {
   tournament: Tournament;
   entrants: number;
   poolCents: number;
-  rakeCents: number;
+  feeCents: number;
   prizeCents: number;
 }
 

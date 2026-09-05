@@ -88,7 +88,7 @@ export default function SettingsPage() {
           ) : null}
         </div>
         <ul className="mt-2 space-y-1 text-sm text-slate-400">
-          <li>· Rake drops from 10% to 7% on every match you play</li>
+          <li>· Escrow fee drops from 10% to 7% — on payouts and withdrawals alike</li>
           <li>· Priority in the matchmaking queue at every stake</li>
         </ul>
 

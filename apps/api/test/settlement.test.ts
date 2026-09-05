@@ -1,27 +1,28 @@
 import {
-  DEFAULT_RAKE_BPS,
-  PRO_RAKE_BPS,
+  DEFAULT_ESCROW_FEE_BPS,
+  PRO_ESCROW_FEE_BPS,
   calculateSettlement,
+  calculateWithdrawal,
   computeTrustScore,
   outcomeFor,
-  rakeForMatch,
+  qualifiesForProRate,
   reconcile,
   settlementPolicyFor,
 } from '@escrow/shared';
 
 describe('calculateSettlement', () => {
-  it('takes a 10% rake by default and pays the rest to the winner', () => {
+  it('takes a 10% escrow fee by default and pays the rest to the winner', () => {
     const result = calculateSettlement(2500, 2500);
     expect(result.grossPoolCents).toBe(5000);
     expect(result.platformFeeCents).toBe(500);
     expect(result.payoutCents).toBe(4500);
-    expect(result.rakeBps).toBe(DEFAULT_RAKE_BPS);
+    expect(result.feeBps).toBe(DEFAULT_ESCROW_FEE_BPS);
   });
 
-  it('never creates or destroys a cent, at any stake or rake', () => {
+  it('never creates or destroys a cent, at any stake or fee rate', () => {
     for (const stake of [1, 7, 333, 500, 1000, 2500, 5000, 10000, 99999]) {
-      for (const rake of [0, 250, 700, 1000, 1234, 2000]) {
-        const { grossPoolCents, platformFeeCents, payoutCents } = calculateSettlement(stake, stake, rake);
+      for (const rate of [0, 250, 700, 1000, 1234, 2000]) {
+        const { grossPoolCents, platformFeeCents, payoutCents } = calculateSettlement(stake, stake, rate);
         expect(platformFeeCents + payoutCents).toBe(grossPoolCents);
         expect(platformFeeCents).toBeGreaterThanOrEqual(0);
         expect(payoutCents).toBeGreaterThan(0);
@@ -29,11 +30,11 @@ describe('calculateSettlement', () => {
     }
   });
 
-  it('charges the Pro rake when either player subscribes', () => {
-    expect(rakeForMatch(false, false)).toBe(DEFAULT_RAKE_BPS);
-    expect(rakeForMatch(true, false)).toBe(PRO_RAKE_BPS);
-    expect(rakeForMatch(false, true)).toBe(PRO_RAKE_BPS);
-    expect(calculateSettlement(1000, 1000, PRO_RAKE_BPS).platformFeeCents).toBe(140);
+  it('earns the Pro rate when either player subscribes', () => {
+    expect(qualifiesForProRate(false, false)).toBe(false);
+    expect(qualifiesForProRate(true, false)).toBe(true);
+    expect(qualifiesForProRate(false, true)).toBe(true);
+    expect(calculateSettlement(1000, 1000, PRO_ESCROW_FEE_BPS).platformFeeCents).toBe(140);
   });
 
   it('refuses asymmetric, zero and out-of-range inputs', () => {
@@ -41,6 +42,43 @@ describe('calculateSettlement', () => {
     expect(() => calculateSettlement(0, 0)).toThrow(/positive/i);
     expect(() => calculateSettlement(1000, 1000, 5000)).toThrow(/basis points/i);
     expect(() => calculateSettlement(10.5, 10.5)).toThrow(/integer/i);
+  });
+});
+
+describe('calculateWithdrawal', () => {
+  it('takes the fee out of the requested amount, not on top of it', () => {
+    const result = calculateWithdrawal(5000);
+    expect(result.grossCents).toBe(5000);
+    expect(result.feeCents).toBe(500);
+    expect(result.netCents).toBe(4500);
+    // The player asked for $50 to leave their wallet, and $50 did.
+    expect(result.feeCents + result.netCents).toBe(result.grossCents);
+  });
+
+  it('charges the Pro rate for subscribers', () => {
+    expect(calculateWithdrawal(5000, PRO_ESCROW_FEE_BPS).netCents).toBe(4650);
+  });
+
+  it('never creates or destroys a cent, at any amount or rate', () => {
+    for (const amount of [2, 13, 101, 999, 1000, 4321, 100000]) {
+      for (const rate of [0, 100, 700, 1000, 2000]) {
+        const { grossCents, feeCents, netCents } = calculateWithdrawal(amount, rate);
+        expect(feeCents + netCents).toBe(grossCents);
+        expect(netCents).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('refuses an amount the fee would swallow whole', () => {
+    // A 1 cent withdrawal at 100% would leave nothing to pay out.
+    expect(() => calculateWithdrawal(1, 2000)).not.toThrow();
+    expect(() => calculateWithdrawal(0)).toThrow(/positive/i);
+    expect(() => calculateWithdrawal(-100)).toThrow(/positive/i);
+  });
+
+  it('rejects a rate outside the permitted band', () => {
+    expect(() => calculateWithdrawal(1000, 9999)).toThrow(/basis points/i);
+    expect(() => calculateWithdrawal(1000, -1)).toThrow(/basis points/i);
   });
 });
 

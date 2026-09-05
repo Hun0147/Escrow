@@ -23,12 +23,19 @@ const TYPE_LABEL: Record<string, string> = {
   withdrawal: 'Withdrawal',
   escrow_lock: 'Stake escrowed',
   escrow_payout: 'Match payout',
+  escrow_fee: 'Escrow fee',
   refund: 'Refund',
   tournament_entry: 'Tournament entry',
   tournament_prize: 'Tournament prize',
-  platform_rake: 'Platform rake',
+  subscription_fee: 'Goal 27 Pro',
   adjustment: 'Adjustment',
 };
+
+interface WithdrawalQuote {
+  feeBps: number;
+  feeCents: number;
+  netCents: number;
+}
 
 const QUICK_AMOUNTS = [1000, 2500, 5000, 10000];
 
@@ -41,6 +48,7 @@ export default function WalletPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [quote, setQuote] = useState<WithdrawalQuote | null>(null);
 
   const load = useCallback(async () => {
     const [history, balance] = await Promise.all([
@@ -54,6 +62,29 @@ export default function WalletPage() {
   useEffect(() => {
     if (user) void load();
   }, [user, load]);
+
+  // Quote the withdrawal fee as the amount changes, so the number a player
+  // sees before tapping is the number they will actually be charged.
+  useEffect(() => {
+    if (!user || amount <= 0) {
+      setQuote(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void api<WithdrawalQuote>(`/wallet/withdraw/quote?amountCents=${amount}`)
+        .then((next) => {
+          if (!cancelled) setQuote(next);
+        })
+        .catch(() => {
+          if (!cancelled) setQuote(null);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [user?.id, amount]);
 
   async function move(direction: 'deposit' | 'withdraw') {
     setBusy(true);
@@ -76,8 +107,14 @@ export default function WalletPage() {
             : `${formatCents(amount)} authorised — it lands as soon as your bank confirms.`,
         );
       } else {
-        await api('/wallet/withdraw', { body: { amountCents: amount, method } });
-        setNotice(`${formatCents(amount)} sent via ${method}.`);
+        const result = await api<{ netCents: number; feeCents: number }>('/wallet/withdraw', {
+          body: { amountCents: amount, method },
+        });
+        setNotice(
+          `${formatCents(result.netCents)} sent via ${method}, after a ${formatCents(
+            result.feeCents,
+          )} escrow fee.`,
+        );
       }
       await Promise.all([refresh(), load()]);
     } catch (err) {
@@ -154,6 +191,25 @@ export default function WalletPage() {
           </button>
         </div>
 
+        {quote ? (
+          <div className="mt-3 rounded-xl bg-pitch-900/70 px-3 py-2 text-sm">
+            <div className="flex items-baseline justify-between text-slate-400">
+              <span>Leaves your wallet</span>
+              <span className="tabular-nums">{formatCents(amount)}</span>
+            </div>
+            <div className="flex items-baseline justify-between text-slate-400">
+              <span>Escrow fee ({(quote.feeBps / 100).toFixed(quote.feeBps % 100 ? 2 : 0)}%)</span>
+              <span className="tabular-nums">−{formatCents(quote.feeCents)}</span>
+            </div>
+            <div className="mt-1 flex items-baseline justify-between border-t border-pitch-600 pt-1">
+              <span className="font-semibold">You receive</span>
+              <span className="font-display text-lg font-black tabular-nums text-volt">
+                {formatCents(quote.netCents)}
+              </span>
+            </div>
+          </div>
+        ) : null}
+
         <div className="mt-3 flex gap-2">
           {(['stripe', 'paypal', 'bank'] as const).map((option) => (
             <button
@@ -205,7 +261,9 @@ export default function WalletPage() {
         </ul>
       )}
       <p className="mt-3 text-[11px] text-slate-500">
-        Every line is a double-entry ledger posting. Nothing here can be edited or deleted, by anyone.
+        Every line is a double-entry ledger posting. Nothing here can be edited or deleted, by
+        anyone. Goal 27 charges one escrow fee — on a winning payout and on a withdrawal. Deposits,
+        refunds, draws and voided matches are never charged.
       </p>
     </AppShell>
   );

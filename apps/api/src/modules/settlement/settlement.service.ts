@@ -119,7 +119,7 @@ export async function finaliseInTransaction(
     winnerId,
     loserId,
     stakeCents: match.stakeCents,
-    rakeBps: match.rakeBps,
+    escrowFeeBps: match.escrowFeeBps,
   });
 
   const updated = await updateMatch(

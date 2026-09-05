@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ALLOWED_HALF_LENGTHS,
+  DEFAULT_ESCROW_FEE_BPS,
   DEFAULT_MATCH_RULES,
   GAME_MODES,
+  PRO_ESCROW_FEE_BPS,
   STAKE_TIERS_CENTS,
   calculateSettlement,
 } from '@escrow/shared';
@@ -24,6 +26,15 @@ export default function CreateMatchPage() {
   const [rules, setRules] = useState<MatchRules>(DEFAULT_MATCH_RULES);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rates, setRates] = useState<{ escrowFeeBps: number; proEscrowFeeBps: number } | null>(null);
+
+  // The fee is a platform setting, so the preview asks the server what it is
+  // rather than restating a number that could drift out of date.
+  useEffect(() => {
+    void api<{ escrowFeeBps: number; proEscrowFeeBps: number }>('/config', { auth: false })
+      .then(setRates)
+      .catch(() => undefined);
+  }, []);
 
   if (loading || !user) {
     return (
@@ -33,8 +44,11 @@ export default function CreateMatchPage() {
     );
   }
 
-  const rakeBps = user.subscriptionTier === 'pro' ? 700 : 1000;
-  const preview = calculateSettlement(stakeCents, stakeCents, rakeBps);
+  const escrowFeeBps =
+    user.subscriptionTier === 'pro'
+      ? (rates?.proEscrowFeeBps ?? PRO_ESCROW_FEE_BPS)
+      : (rates?.escrowFeeBps ?? DEFAULT_ESCROW_FEE_BPS);
+  const preview = calculateSettlement(stakeCents, stakeCents, escrowFeeBps);
   const affordable = (wallet?.availableCents ?? 0) >= stakeCents;
 
   async function create() {
@@ -174,16 +188,22 @@ export default function CreateMatchPage() {
           </span>
         </div>
         <div className="flex items-baseline justify-between text-sm text-slate-400">
-          <span>Platform rake ({(rakeBps / 100).toFixed(0)}%)</span>
+          <span>Escrow fee ({(escrowFeeBps / 100).toFixed(escrowFeeBps % 100 ? 2 : 0)}%)</span>
           <span className="tabular-nums">−{formatCents(preview.platformFeeCents)}</span>
         </div>
         <div className="mt-2 flex items-baseline justify-between border-t border-pitch-600 pt-2">
           <span className="text-sm font-semibold">Winner takes</span>
           <span className="stake">{formatCents(preview.payoutCents)}</span>
         </div>
-        {user.subscriptionTier !== 'pro' ? (
-          <p className="mt-2 text-xs text-slate-500">Pro members pay 7% instead of 10%.</p>
-        ) : null}
+        <p className="mt-2 text-xs text-slate-500">
+          Charged only when the match settles on a winner. A draw or a voided match returns both
+          stakes in full.
+          {user.subscriptionTier !== 'pro' && rates
+            ? ` Pro members pay ${(rates.proEscrowFeeBps / 100).toFixed(0)}% instead of ${(
+                rates.escrowFeeBps / 100
+              ).toFixed(0)}%.`
+            : ''}
+        </p>
       </section>
 
       {error ? (

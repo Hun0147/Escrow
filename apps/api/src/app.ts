@@ -1,6 +1,8 @@
 import express, { NextFunction, Request, Response } from 'express';
 import { STAKE_TIERS_CENTS, GAME_MODES, ALLOWED_HALF_LENGTHS, SKILL_TIERS } from '@escrow/shared';
 import { AppError } from './common/errors';
+import { handler } from './common/async-handler';
+import { publishedFeeRates } from './common/fees';
 import { authRouter } from './modules/auth/auth.routes';
 import { meRouter, usersRouter } from './modules/onboarding/profile.routes';
 import { walletRouter } from './modules/wallet/wallet.routes';
@@ -33,13 +35,20 @@ export function createApp() {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
-  /** Everything the client needs to render the lobby filters without hard-coding. */
-  app.get('/config', (_req, res) =>
-    res.json({
-      stakeTiersCents: STAKE_TIERS_CENTS,
-      gameModes: GAME_MODES,
-      halfLengths: ALLOWED_HALF_LENGTHS,
-      skillTiers: SKILL_TIERS,
+  /** Everything the client needs to render the lobby and quote a fee without
+   *  hard-coding either. */
+  app.get(
+    '/config',
+    handler(async (_req, res) => {
+      const { standardBps, proBps } = await publishedFeeRates();
+      res.json({
+        stakeTiersCents: STAKE_TIERS_CENTS,
+        gameModes: GAME_MODES,
+        halfLengths: ALLOWED_HALF_LENGTHS,
+        skillTiers: SKILL_TIERS,
+        escrowFeeBps: standardBps,
+        proEscrowFeeBps: proBps,
+      });
     }),
   );
 

@@ -40,6 +40,18 @@ walletRouter.post(
   }),
 );
 
+/** What a withdrawal would cost, so the fee is visible before it is charged. */
+walletRouter.get(
+  '/withdraw/quote',
+  handler(async (req, res) => {
+    const amountCents = Number(req.query.amountCents);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      throw badRequest('invalid_amount', 'Provide a positive whole number of cents');
+    }
+    res.json(await wallet.quoteWithdrawal(req.currentUser!, amountCents));
+  }),
+);
+
 walletRouter.get(
   '/',
   handler(async (req, res) => {

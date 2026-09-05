@@ -41,7 +41,7 @@ const createSchema = z.object({
   name: z.string().min(3).max(80),
   gameMode: z.enum(GAME_MODES as unknown as [string, ...string[]]),
   entryFeeCents: z.number().int().nonnegative(),
-  rakeBps: z.number().int().min(0).max(2000).optional(),
+  escrowFeeBps: z.number().int().min(0).max(2000).optional(),
   maxEntrants: z.number().int().min(2).max(256),
   sponsorName: z.string().max(80).nullable().optional(),
   startsAt: z.string().datetime().nullable().optional(),

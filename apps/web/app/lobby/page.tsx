@@ -222,7 +222,7 @@ export default function LobbyPage() {
               </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <p className="text-xs text-slate-500">
-                  Winner takes {formatCents(entry.match.stakeCents * 2 - Math.round((entry.match.stakeCents * 2 * entry.match.rakeBps) / 10000))}
+                  Winner takes {formatCents(entry.match.stakeCents * 2 - Math.round((entry.match.stakeCents * 2 * entry.match.escrowFeeBps) / 10000))}
                 </p>
                 <button className="btn-primary" disabled={blocked || busy} onClick={() => join(entry.match.id)}>
                   Join for {formatCents(entry.match.stakeCents)}

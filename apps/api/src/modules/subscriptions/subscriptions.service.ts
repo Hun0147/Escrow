@@ -54,7 +54,7 @@ export async function subscribe(user: UserRow): Promise<Subscription> {
     userId: user.id,
     type: 'wallet_debited',
     title: 'Goal 27 Pro is live',
-    body: `Your rake drops to 7% and you take priority in the matchmaking queue until ${new Date(
+    body: `Your escrow fee drops to 7% and you take priority in the matchmaking queue until ${new Date(
       subscription.currentPeriodEnd,
     ).toLocaleDateString()}.`,
   });
@@ -63,7 +63,7 @@ export async function subscribe(user: UserRow): Promise<Subscription> {
 
 /**
  * Cancels at the end of the paid period rather than immediately: the player
- * bought that time and keeps the lower rake until it runs out.
+ * bought that time and keeps the lower fee until it runs out.
  */
 export async function cancel(user: UserRow): Promise<Subscription> {
   const live = await findLiveSubscription(user.id);
@@ -124,7 +124,7 @@ export async function sweepRenewals(): Promise<{ renewed: string[]; closed: stri
       await close(
         subscription,
         'lapsed',
-        'Goal 27 Pro lapsed: there was not enough balance to renew. Your rake is back to 10%.',
+        'Goal 27 Pro lapsed: there was not enough balance to renew. Your escrow fee is back to 10%.',
       );
       closed.push(subscription.id);
     }

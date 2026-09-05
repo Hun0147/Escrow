@@ -186,8 +186,11 @@ describe('wallet limits and responsible play', () => {
 
     const verified = await makeUser({ balanceCents: 5000, kycApproved: true });
     await expect(withdraw({ user: verified, amountCents: 2000, method: 'bank' })).resolves.toMatchObject({
-      availableCents: 3000,
+      grossCents: 2000,
+      feeCents: 200,
+      netCents: 1800,
     });
+    expect((await getWallet(verified.id))!.availableCents).toBe(3000);
     expect(await reconcileWallets()).toEqual([]);
   });
 

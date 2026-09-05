@@ -1,4 +1,4 @@
-import { Wallet, userAvailable } from '@escrow/shared';
+import { Wallet, calculateWithdrawal, userAvailable } from '@escrow/shared';
 import { pool } from '../../db/pool';
 import { withTransaction } from '../../db/transaction';
 import { UserRow } from '../../db/repos/users.repo';
@@ -18,8 +18,15 @@ import {
 } from '../../db/repos/fraud.repo';
 import { paymentProvider } from '../../payments';
 import { getSetting } from '../../common/settings';
+import { escrowFeeBpsFor } from '../../common/fees';
 import { badRequest, forbidden, notFound, tooManyRequests } from '../../common/errors';
-import { assertPositiveAmount, creditDeposit, debitWithdrawal } from './money.service';
+import {
+  assertPositiveAmount,
+  creditDeposit,
+  debitWithdrawal,
+  reverseWithdrawal,
+} from './money.service';
+import { isPro } from '../subscriptions/subscriptions.service';
 import { notify } from '../notifications/notifications.service';
 import { realtime } from '../../realtime/bus';
 
@@ -217,7 +224,25 @@ export interface WithdrawParams {
   method: 'stripe' | 'paypal' | 'bank';
 }
 
-export async function withdraw(params: WithdrawParams): Promise<Wallet> {
+export interface WithdrawalResult {
+  wallet: Wallet;
+  /** What left the wallet. */
+  grossCents: number;
+  feeBps: number;
+  feeCents: number;
+  /** What the player actually receives. */
+  netCents: number;
+}
+
+/**
+ * Cashing out.
+ *
+ * The requested amount is what leaves the wallet; the escrow fee comes out of
+ * it and the player receives the remainder. Quoting it the other way round —
+ * fee added on top — would let a withdrawal exceed the balance that authorised
+ * it, and would surprise a player who asked to withdraw everything they had.
+ */
+export async function withdraw(params: WithdrawParams): Promise<WithdrawalResult> {
   const { user, amountCents } = params;
   assertPositiveAmount(amountCents, 'Withdrawal');
 
@@ -228,6 +253,19 @@ export async function withdraw(params: WithdrawParams): Promise<Wallet> {
 
   const min = await getSetting('min_withdrawal_cents');
   if (amountCents < min) throw badRequest('below_minimum', `Minimum withdrawal is ${min} cents`);
+
+  // Subscribers pay the reduced rate here too — it is one fee on one rate,
+  // wherever money leaves escrow.
+  const feeBps = await escrowFeeBpsFor(await isPro(user.id));
+  const breakdown = calculateWithdrawal(amountCents, feeBps);
+
+  const minNet = await getSetting('min_withdrawal_net_cents');
+  if (breakdown.netCents < minNet) {
+    throw badRequest(
+      'below_minimum_net',
+      `After the escrow fee this would pay out ${breakdown.netCents} cents; the minimum is ${minNet}`,
+    );
+  }
 
   const recentCount = await countRecentPayments(
     user.id,
@@ -258,46 +296,62 @@ export async function withdraw(params: WithdrawParams): Promise<Wallet> {
     provider: params.method,
     amountCents,
   });
+  const memo = `Withdrawal ${intent.id} via ${params.method}`;
 
   try {
     // Debit first: the funds are reserved before we ask the provider to move
     // them, so a slow payout cannot be spent twice in the meantime. A provider
-    // failure refunds below.
+    // failure reverses below.
     const wallet = await withTransaction(async (client) => {
-      await debitWithdrawal(client, user.id, amountCents, `Withdrawal ${intent.id} via ${params.method}`);
+      await debitWithdrawal(client, user.id, breakdown, memo);
       return (await getWallet(user.id, client))!;
     });
 
+    // The provider only ever moves the net — the fee never leaves the platform.
     const ticket = await paymentProvider().createPayout({
       intentId: intent.id,
       userId: user.id,
-      amountCents,
+      amountCents: breakdown.netCents,
       method: params.method,
     });
     await attachProviderRef(intent.id, ticket.providerRef);
     // A payout that has not settled stays pending until the provider says so.
     if (ticket.settled) await completePaymentIntent(intent.id, 'succeeded', null);
+
     await notify({
       userId: user.id,
       type: 'wallet_debited',
       title: 'Withdrawal sent',
-      body: `${amountCents} cents is on its way via ${params.method}.`,
+      body: `${breakdown.netCents} cents is on its way via ${params.method}, after a ${breakdown.feeCents} cent escrow fee.`,
     });
-    return wallet;
+    return { wallet, ...breakdown };
   } catch (err) {
     await completePaymentIntent(intent.id, 'failed', (err as Error).message);
     // If the debit went through but the provider did not, the money is ours to
-    // give back immediately — a failed payout must never eat a balance.
-    const intentRow = await findPaymentIntent(intent.id);
-    if (intentRow && (await debitAlreadyPosted(intent.id))) {
+    // give back immediately — a failed payout must never eat a balance, and
+    // must never leave us holding a fee for a transfer that did not happen.
+    if (await debitAlreadyPosted(intent.id)) {
       await withTransaction((client) =>
-        creditDeposit(client, user.id, amountCents, `Reversal of failed withdrawal ${intent.id}`),
+        reverseWithdrawal(client, user.id, breakdown, `Reversal of failed withdrawal ${intent.id}`),
       );
       const restored = await getWallet(user.id);
       if (restored) realtime.toUser(user.id, 'wallet:updated', restored);
     }
     throw err;
   }
+}
+
+/**
+ * What a withdrawal would cost, without committing to it. The wallet screen
+ * calls this so the fee is visible before the player taps the button.
+ */
+export async function quoteWithdrawal(
+  user: UserRow,
+  amountCents: number,
+): Promise<{ feeBps: number; feeCents: number; netCents: number }> {
+  const feeBps = await escrowFeeBpsFor(await isPro(user.id));
+  const { feeCents, netCents } = calculateWithdrawal(amountCents, feeBps);
+  return { feeBps, feeCents, netCents };
 }
 
 /** Did the withdrawal's ledger debit actually post before the failure? */

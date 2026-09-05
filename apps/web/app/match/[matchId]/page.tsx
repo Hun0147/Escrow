@@ -112,7 +112,7 @@ export default function MatchRoomPage() {
   const myReady = isCreator ? match.creatorReady : match.opponentReady;
   const theirReady = isCreator ? match.opponentReady : match.creatorReady;
   const myReport = results.find((result) => result.reporterId === user.id) ?? null;
-  const payout = calculateSettlement(match.stakeCents, match.stakeCents, match.rakeBps);
+  const payout = calculateSettlement(match.stakeCents, match.stakeCents, match.escrowFeeBps);
   const finished = ['settled', 'voided', 'cancelled'].includes(match.status);
   // A finished match has no clock and no ready state — showing either would
   // suggest there is still something to do.
@@ -249,7 +249,7 @@ export default function MatchRoomPage() {
           </p>
           <p className="mt-1 text-sm text-slate-400">
             {match.winnerId === null
-              ? 'Draw — both stakes returned in full, no rake taken.'
+              ? 'Draw — both stakes returned in full, no escrow fee taken.'
               : match.winnerId === user.id
                 ? `You won ${formatCents(payout.payoutCents)}.`
                 : 'Your opponent took the pool.'}

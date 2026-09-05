@@ -11,11 +11,12 @@ let cache: Record<string, unknown> = {};
 let cachedAt = 0;
 
 export const SETTING_DEFAULTS = {
-  rake_bps: 1000,
-  pro_rake_bps: 700,
+  escrow_fee_bps: 1000,
+  pro_escrow_fee_bps: 700,
   min_deposit_cents: 500,
   max_deposit_cents: 100_000,
   min_withdrawal_cents: 1000,
+  min_withdrawal_net_cents: 100,
   daily_withdrawal_cap_cents: 200_000,
   daily_deposit_cap_cents: 100_000,
   result_deadline_minutes: 10,

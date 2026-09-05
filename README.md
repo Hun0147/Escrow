@@ -2,7 +2,7 @@
 
 Skill-based competitive gaming for PS5. Two players agree a stake and a set of
 rules, play each other on EA Sports FC on their own consoles, report the score,
-and the winner's wallet is credited within minutes minus the platform rake.
+and the winner's wallet is credited within minutes minus the escrow fee.
 
 Both stakes sit in escrow from the moment the second player joins. **Escrow only
 releases on agreement between the two players or on a moderator's ruling** —
@@ -30,7 +30,7 @@ there is no path where one player's word moves the other player's money.
 | Leaderboards by stake tier | Built |
 | Admin dashboard, KYC review, fraud flags, settings | Built |
 | Real-time: lobby, chat, ready state, countdown, disconnects, wallet | Built (Socket.io) |
-| Pro subscription: lower rake, priority matchmaking | Built |
+| Pro subscription: lower escrow fee, priority matchmaking | Built |
 | Stripe integration | Built but **unverified against live Stripe** — no account was available. Signature verification and the capture flow are tested; the two REST calls are not. |
 | React Native mobile app | **Not built.** The web client is mobile-first and works as a phone web app; a native shell is a separate piece of work. |
 
@@ -88,7 +88,7 @@ createdb escrow_test -O escrow
 npm test
 ```
 
-146 tests across 11 suites, run against a real PostgreSQL database rather than a
+169 tests across 12 suites, run against a real PostgreSQL database rather than a
 stub — the money paths are only meaningful if the transactions, row locks and
 constraints are real. Migrations are applied once before the suite; tables are
 truncated between cases.
@@ -109,9 +109,10 @@ transfer between two named accounts:
 deposit          external:settlement  →  user:<id>:available
 stake            user:<id>:available  →  escrow:match:<id>
 payout           escrow:match:<id>    →  user:<winner>:available
-rake             escrow:match:<id>    →  platform:revenue
+escrow fee       escrow:match:<id>    →  platform:revenue
 refund           escrow:match:<id>    →  user:<id>:available
 withdrawal       user:<id>:available  →  external:settlement
+escrow fee       user:<id>:available  →  platform:revenue
 ```
 
 There is no way to express a one-sided entry, so the books cannot be written out
@@ -150,18 +151,55 @@ Three properties carry the weight, and each is tested:
   recorded is not a payment to credit; it raises a fraud flag and nothing moves.
 
 Withdrawals debit first and then ask the provider to move the money, so a slow
-payout cannot be spent twice while it is in flight. If the provider refuses, the
-debit is reversed.
+payout cannot be spent twice while it is in flight. Only the net crosses the
+platform boundary — the fee never leaves. If the provider refuses, both halves
+are reversed, fee included: the platform must not keep a charge for a transfer
+it never made.
+
+### The escrow fee
+
+Goal 27 charges **one fee, at one rate**, wherever money leaves escrow to a
+player. There is no separate rake, no deposit charge and no per-match listing
+fee — a player has exactly one number to understand.
+
+| Event | Charged? |
+|---|---|
+| Winning payout | **Yes** — taken from the pool |
+| Tournament prize | **Yes** — taken from the pool |
+| Withdrawal | **Yes** — taken from the amount withdrawn |
+| Deposit | No |
+| Draw, void, replay, moderator refund | No |
+| Cancelling a match nobody joined | No |
+| A withdrawal the provider refused | No — the fee is reversed with it |
+
+The principle: the platform earns when it settles a contest or moves money
+out, never when a match fails to happen. Money returning to the player it
+already belonged to is never touched.
+
+- The rate is **10%** by default, **7%** for Goal 27 Pro subscribers, and both
+  are runtime settings resolved in one place (`common/fees.ts`) rather than
+  constants scattered across the code. Changing `escrow_fee_bps` changes what
+  settlements *and* withdrawals charge, together.
+- The Pro discount is read from the live subscription period, not a cached tier
+  flag, so a lapsed subscription stops earning it immediately.
+- The fee is rounded to the nearest cent and the player takes the remainder, so
+  `gross == fee + net` holds exactly, at any amount and any rate.
+- On a withdrawal the fee comes **out of** the requested amount, not on top of
+  it: asking to withdraw $50 always removes exactly $50 from the wallet. The
+  wallet screen quotes the fee and the net before the player commits, and the
+  statement shows the payout and the charge as two separate lines.
+
+> **Worth knowing before launch.** Charging on both settlement and withdrawal
+> means the same money is charged twice on a full cycle: a $25 match pays the
+> winner $45 of a $50 pool, and cashing that out at the same rate costs another
+> $4.50 — an effective take of roughly 19% of the pool. That is deliberate and
+> tested, but it is aggressive for a skill-wager product. Because both come
+> from one setting today, dialling withdrawals down means splitting
+> `escrowFeeBpsFor` into two settings — a small, contained change.
 
 ### Settlement
 
-- Rake is **10%** of the pool by default, **7%** if either player subscribes to
-  Pro. Both are runtime settings, not constants in code. The discount is read
-  from the live subscription period, not a cached tier flag, so a lapsed
-  subscription stops earning it immediately.
-- The fee is rounded to the nearest cent and the winner takes the remainder, so
-  `pool == fee + payout` exactly, at any stake and any rake.
-- A **draw voids the match**: both stakes are returned in full and no rake is
+- A **draw voids the match**: both stakes are returned in full and no fee is
   taken. The house does not profit from a game that produced no result.
 - Both stakes are locked in escrow the moment the second player joins, and stay
   there through reporting, disputes and moderation.
@@ -276,6 +314,7 @@ token, never from the request body.
 | POST | `/matches/:id/ready`, `/chat`, `/forfeit`, `/cancel` | Match room |
 | POST | `/matches/:id/screenshots` | Upload evidence (base64, ≤8 MB) |
 | POST | `/matches/:id/result` | Report a score; auto-settles when both agree |
+| GET | `/wallet/withdraw/quote?amountCents=` | What a withdrawal would cost, before committing |
 | GET | `/matches/leaderboard?stakeCents=` | Leaderboard for one stake tier |
 | POST | `/disputes` | Raise a dispute (participants only) |
 | GET | `/disputes`, `/disputes/:id` | Moderation queue and case file |
@@ -296,7 +335,10 @@ token, never from the request body.
 `admin_actions`, `platform_settings`, `subscriptions`, `payment_events`.
 
 Escrow state is a column on `matches` rather than a separate table: escrow is
-one-to-one with a match, and the ledger already holds the amounts.
+one-to-one with a match, and the ledger already holds the amounts. The fee rate
+a match or tournament carries is frozen onto its row (`escrow_fee_bps`) when it
+is created, so changing the platform rate never re-prices a contest that is
+already under way.
 
 Migrations live in `apps/api/src/db/migrations` and are applied in filename
 order, each in its own transaction, tracked in `schema_migrations`.
