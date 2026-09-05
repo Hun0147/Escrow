@@ -121,6 +121,31 @@ describe('linked accounts', () => {
     expect((await listOpenFraudFlags()).map((f) => f.kind)).toContain('weak_account_link');
   });
 
+  it('flags a shared device at signup but not a shared address', async () => {
+    // Two unrelated players behind one NAT is the common case, not fraud.
+    await registerUser({ ...REGISTRATION, ip: '198.51.100.9', deviceFingerprint: 'laptop-a' });
+    await registerUser({
+      ...REGISTRATION,
+      handle: 'neighbour',
+      email: 'neighbour@example.test',
+      ip: '198.51.100.9',
+      deviceFingerprint: 'laptop-b',
+    });
+    expect(await listOpenFraudFlags()).toHaveLength(0);
+
+    // The same physical device is a different matter.
+    await registerUser({
+      ...REGISTRATION,
+      handle: 'sameconsole',
+      email: 'sameconsole@example.test',
+      ip: '198.51.100.9',
+      deviceFingerprint: 'laptop-a',
+    });
+    const flags = await listOpenFraudFlags();
+    expect(flags.map((f) => f.kind)).toContain('linked_account_at_signup');
+    expect(flags.every((f) => !f.detail.includes('shared_ip'))).toBe(true);
+  });
+
   it('lets unrelated accounts play normally', async () => {
     const alice = await makeUser({ balanceCents: 5000 });
     const bob = await makeUser({ balanceCents: 5000 });

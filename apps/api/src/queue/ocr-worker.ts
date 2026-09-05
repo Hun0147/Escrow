@@ -21,6 +21,7 @@ import { evidenceStore } from '../storage';
 import { decodeToGrayscale } from '../ocr/image';
 import { ocrEngine } from '../ocr/engine';
 import { realtime } from '../realtime/bus';
+import { finaliseIfPossible } from '../modules/results/results.service';
 
 export interface OcrOutcome {
   screenshotId: string;
@@ -47,6 +48,7 @@ export async function processScreenshot(screenshotId: string): Promise<OcrOutcom
   const exact = await findScreenshotBySha(screenshot.sha256, screenshot.id);
   if (exact) {
     await flagDuplicate(screenshot.id, exact.id, screenshot.uploaderId, 'identical bytes');
+    await settleIfNowPossible(screenshot.matchId);
     return { screenshotId, verdict: 'duplicate', perceptualHash: null, flags: ['duplicate_exact'] };
   }
 
@@ -61,6 +63,7 @@ export async function processScreenshot(screenshotId: string): Promise<OcrOutcom
       if (!other.perceptualHash || other.perceptualHash.length !== perceptualHash.length) continue;
       if (hammingDistance(perceptualHash, other.perceptualHash) <= DUPLICATE_HAMMING_THRESHOLD) {
         await flagDuplicate(screenshot.id, other.id, screenshot.uploaderId, 'perceptually identical');
+        await settleIfNowPossible(screenshot.matchId);
         return { screenshotId, verdict: 'duplicate', perceptualHash, flags: ['duplicate_perceptual'] };
       }
     }
@@ -119,7 +122,24 @@ export async function processScreenshot(screenshotId: string): Promise<OcrOutcom
     flags,
   });
 
+  // The evidence this match was waiting on may have just arrived.
+  await settleIfNowPossible(screenshot.matchId);
+
   return { screenshotId, verdict, perceptualHash, flags };
+}
+
+/**
+ * Re-checks a match after its evidence changes.
+ *
+ * Analysis failures must not take the worker down with them — a screenshot
+ * that cannot be judged leaves the match where it was, for a moderator.
+ */
+async function settleIfNowPossible(matchId: string): Promise<void> {
+  try {
+    await finaliseIfPossible(matchId);
+  } catch (err) {
+    console.error(`Post-analysis settlement check failed for match ${matchId}:`, err);
+  }
 }
 
 async function flagDuplicate(

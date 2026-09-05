@@ -12,12 +12,12 @@ import { encodePng, scoreboardImage, scoreboardJpeg } from './png';
 import { makeUser, ULTIMATE_TEAM } from './factories';
 import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
 import { uploadScreenshot } from '../src/modules/screenshots/screenshots.service';
-import { submitResult } from '../src/modules/results/results.service';
+import { submitResult, sweepLapsedMatches } from '../src/modules/results/results.service';
 import { drainOcrQueue } from '../src/queue/ocr-worker';
 import { findScreenshotById, listScreenshotsForMatch } from '../src/db/repos/misc.repo';
 import { listOpenFraudFlags } from '../src/db/repos/fraud.repo';
-import { findMatchById } from '../src/db/repos/matches.repo';
-import { accountBalance, reconcileWallets } from '../src/db/repos/ledger.repo';
+import { findMatchById, updateMatch } from '../src/db/repos/matches.repo';
+import { accountBalance, getWallet, reconcileWallets } from '../src/db/repos/ledger.repo';
 import { matchEscrow } from '@escrow/shared';
 
 const FUT_SCREEN = `FULL TIME
@@ -323,7 +323,7 @@ describe('screenshot pipeline', () => {
     expect((await listOpenFraudFlags()).map((f) => f.kind)).toContain('ocr_score_mismatch');
   });
 
-  it('holds escrow for a low-trust pair until both screenshots are in', async () => {
+  it('holds escrow for a mid-trust pair until both screenshots are in', async () => {
     const creator = await makeUser({ balanceCents: 5000, trustScore: 60, psnId: 'Striker_Sam' });
     const opponent = await makeUser({ balanceCents: 5000, trustScore: 62, psnId: 'KeeperKate' });
     const match = await createMatch(creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
@@ -336,6 +336,62 @@ describe('screenshot pipeline', () => {
     expect(held.detail).toMatch(/screenshot/i);
     expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
     expect((await findMatchById(match.id))!.status).toBe('awaiting_results');
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('settles a held match once the missing screenshot finally arrives', async () => {
+    const creator = await makeUser({ balanceCents: 5000, trustScore: 60, psnId: 'Striker_Sam' });
+    const opponent = await makeUser({ balanceCents: 5000, trustScore: 62, psnId: 'KeeperKate' });
+    const match = await createMatch(creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(opponent, match.id);
+
+    // Both agree, but neither has uploaded anything yet: escrow is held.
+    await submitResult(creator, { matchId: match.id, selfScore: 3, opponentScore: 1 });
+    const held = await submitResult(opponent, { matchId: match.id, selfScore: 1, opponentScore: 3 });
+    expect(held.status).toBe('held_for_review');
+
+    await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 41), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+    // One screenshot is not enough — the other player still owes theirs.
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+
+    await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 42), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    // With the evidence complete, the settlement that was waiting goes through
+    // on its own — no second report, no moderator, no stuck escrow.
+    const settled = await findMatchById(match.id);
+    expect(settled!.status).toBe('settled');
+    expect(settled!.winnerId).toBe(creator.id);
+    expect(await accountBalance(matchEscrow(match.id))).toBe(0);
+    expect((await getWallet(creator.id))!.availableCents).toBe(4000 + 1800);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('escalates a match still missing evidence when the window closes', async () => {
+    const creator = await makeUser({ balanceCents: 5000, trustScore: 60, psnId: 'Striker_Sam' });
+    const opponent = await makeUser({ balanceCents: 5000, trustScore: 62, psnId: 'KeeperKate' });
+    const match = await createMatch(creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(opponent, match.id);
+
+    await submitResult(creator, { matchId: match.id, selfScore: 2, opponentScore: 0 });
+    await submitResult(opponent, { matchId: match.id, selfScore: 0, opponentScore: 2 });
+    await updateMatch(match.id, { reportDeadlineAt: new Date(Date.now() - 60_000).toISOString() });
+
+    const escalated = await sweepLapsedMatches();
+
+    // The escrow must never simply sit there: a human picks it up instead.
+    expect(escalated).toContain(match.id);
+    expect((await findMatchById(match.id))!.status).toBe('disputed');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
     expect(await reconcileWallets()).toEqual([]);
   });
 

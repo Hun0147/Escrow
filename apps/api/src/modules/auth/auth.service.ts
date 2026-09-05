@@ -9,7 +9,12 @@ import {
   toSelfUser,
 } from '../../db/repos/users.repo';
 import { createWallet } from '../../db/repos/ledger.repo';
-import { recordDevice, findLinkedAccounts, raiseFraudFlag } from '../../db/repos/fraud.repo';
+import {
+  BLOCKING_LINK_REASONS,
+  findLinkedAccounts,
+  raiseFraudFlag,
+  recordDevice,
+} from '../../db/repos/fraud.repo';
 import { withTransaction } from '../../db/transaction';
 import { assertEligible } from '../../common/geo';
 import { conflict, forbidden, unauthorized } from '../../common/errors';
@@ -77,17 +82,23 @@ export async function registerUser(params: RegisterParams): Promise<SelfUser> {
     return created;
   });
 
-  // One account per identity. A shared device or IP at signup is not proof of
-  // fraud (shared houses, campus NAT), so it raises a flag for review rather
-  // than blocking the signup — but it does bar the two accounts from playing
-  // each other, which is enforced when a match is joined.
+  // One account per identity. A shared device at signup is worth a moderator's
+  // attention; a shared IP on its own is not — a campus, an office or any
+  // carrier-grade NAT puts thousands of unrelated players on one address, and
+  // flagging every pair would bury the queue in noise faster than it grows.
+  // IP-only linkage is picked up at join time instead, where two such accounts
+  // choosing to play each other is the thing that actually means something.
   const linked = await findLinkedAccounts(user.id);
   for (const link of linked) {
+    const blocking = link.reasons.filter((reason) =>
+      (BLOCKING_LINK_REASONS as readonly string[]).includes(reason),
+    );
+    if (blocking.length === 0) continue;
     await raiseFraudFlag({
       userId: user.id,
       relatedUserId: link.userId,
       kind: 'linked_account_at_signup',
-      detail: link.reasons.join(', '),
+      detail: blocking.join(', '),
     });
   }
 

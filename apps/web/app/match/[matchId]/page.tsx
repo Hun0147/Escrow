@@ -113,7 +113,10 @@ export default function MatchRoomPage() {
   const theirReady = isCreator ? match.opponentReady : match.creatorReady;
   const myReport = results.find((result) => result.reporterId === user.id) ?? null;
   const payout = calculateSettlement(match.stakeCents, match.stakeCents, match.rakeBps);
-  const deadline = countdown(match.reportDeadlineAt);
+  const finished = ['settled', 'voided', 'cancelled'].includes(match.status);
+  // A finished match has no clock and no ready state — showing either would
+  // suggest there is still something to do.
+  const deadline = finished ? null : countdown(match.reportDeadlineAt);
 
   async function act(work: () => Promise<unknown>, message?: string) {
     setError(null);
@@ -147,9 +150,14 @@ export default function MatchRoomPage() {
         </div>
 
         <div className="mt-4 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <PlayerCell player={me} ready={myReady} you />
+          <PlayerCell player={me} ready={myReady} you showReady={!finished} />
           <span className="font-display text-xs font-black text-slate-600">VS</span>
-          <PlayerCell player={them} ready={theirReady} online={opponentOnline} />
+          <PlayerCell
+            player={them}
+            ready={theirReady}
+            online={opponentOnline}
+            showReady={!finished}
+          />
         </div>
 
         <p className="mt-3 rounded-lg bg-pitch-900/70 px-3 py-2 text-xs text-slate-400">
@@ -166,7 +174,7 @@ export default function MatchRoomPage() {
 
       {error ? <div className="mb-3"><Banner tone="danger">{error}</Banner></div> : null}
       {notice ? <div className="mb-3"><Banner tone="good">{notice}</Banner></div> : null}
-      {opponentOnline === false && !['settled', 'voided'].includes(match.status) ? (
+      {opponentOnline === false && !finished ? (
         <div className="mb-3">
           <Banner tone="warn">
             Your opponent’s connection dropped. If they don’t come back, report your result and the
@@ -356,11 +364,13 @@ function PlayerCell({
   ready,
   you,
   online,
+  showReady = true,
 }: {
   player: PublicUser | null;
   ready: boolean;
   you?: boolean;
   online?: boolean | null;
+  showReady?: boolean;
 }) {
   if (!player) {
     return (
@@ -370,7 +380,11 @@ function PlayerCell({
     );
   }
   return (
-    <div className={`rounded-xl border px-3 py-3 ${ready ? 'border-volt/60 bg-volt/5' : 'border-pitch-500'}`}>
+    <div
+      className={`rounded-xl border px-3 py-3 ${
+        showReady && ready ? 'border-volt/60 bg-volt/5' : 'border-pitch-500'
+      }`}
+    >
       <p className="truncate font-display text-sm font-bold">
         {player.handle}
         {you ? <span className="text-slate-500"> (you)</span> : null}
@@ -378,11 +392,15 @@ function PlayerCell({
       <p className="truncate text-[11px] text-slate-400">{player.psnId ?? 'no PSN linked'}</p>
       <div className="mt-1 flex items-center gap-2">
         <TrustBadge score={player.trustScore} />
-        <span className={`text-[10px] font-bold uppercase ${ready ? 'text-volt' : 'text-slate-500'}`}>
-          {ready ? 'Ready' : 'Not ready'}
-        </span>
+        {showReady ? (
+          <span className={`text-[10px] font-bold uppercase ${ready ? 'text-volt' : 'text-slate-500'}`}>
+            {ready ? 'Ready' : 'Not ready'}
+          </span>
+        ) : null}
       </div>
-      {online === false ? <p className="text-[10px] font-semibold text-danger">Disconnected</p> : null}
+      {showReady && online === false ? (
+        <p className="text-[10px] font-semibold text-danger">Disconnected</p>
+      ) : null}
     </div>
   );
 }

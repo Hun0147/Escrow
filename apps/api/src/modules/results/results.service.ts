@@ -16,7 +16,7 @@ import {
 } from '../../db/repos/matches.repo';
 import { UserRow, findUserById } from '../../db/repos/users.repo';
 import { findScreenshotById, listScreenshotsForMatch, upsertDispute } from '../../db/repos/misc.repo';
-import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
+import { AppError, badRequest, conflict, forbidden, notFound } from '../../common/errors';
 import { getSetting } from '../../common/settings';
 import { notify } from '../notifications/notifications.service';
 import { realtime } from '../../realtime/bus';
@@ -130,14 +130,43 @@ export async function submitResult(user: UserRow, input: SubmitResultInput): Pro
     };
   }
 
-  return resolveBothReports(prepared.match, prepared.reports, prepared.result);
+  const outcome = await finaliseIfPossible(prepared.match.id);
+  return { ...outcome, result: prepared.result };
+}
+
+/**
+ * Tries to bring a fully-reported match to a conclusion.
+ *
+ * Deliberately re-runnable, because "both players agreed but the evidence
+ * isn't in yet" is a waiting state, not an outcome: the screenshot that
+ * unblocks it arrives later, and something has to look again when it does.
+ * Called on every result submission and again after each screenshot is
+ * analysed.
+ */
+export async function finaliseIfPossible(
+  matchId: string,
+): Promise<Omit<SubmitResultOutcome, 'result'>> {
+  const match = await findMatchById(matchId);
+  if (!match) throw notFound('Match');
+
+  if (match.status === 'settled' || match.status === 'voided') {
+    return { match, status: 'settled', detail: 'This match is already settled.' };
+  }
+  if (match.status === 'disputed') {
+    return { match, status: 'disputed', detail: 'This match is with a moderator.' };
+  }
+
+  const reports = await listResults(matchId);
+  if (reports.length < 2) {
+    return { match, status: 'awaiting_opponent', detail: 'Waiting on the second report.' };
+  }
+  return resolveBothReports(match, reports);
 }
 
 async function resolveBothReports(
   match: Match,
   reports: MatchResult[],
-  latest: MatchResult,
-): Promise<SubmitResultOutcome> {
+): Promise<Omit<SubmitResultOutcome, 'result'>> {
   const raw: RawReport[] = reports.map((r) => ({
     reporterId: r.reporterId,
     selfScore: r.selfScore,
@@ -161,7 +190,6 @@ async function resolveBothReports(
       await recomputeTrustScore(report.reporterId);
     }
     return {
-      result: latest,
       match: await findMatchById(match.id).then((m) => m!),
       status: 'disputed',
       detail: `Reports conflict — dispute ${dispute.id} is in the moderation queue.`,
@@ -176,7 +204,6 @@ async function resolveBothReports(
     const missing = [match.creatorId, match.opponentId!].filter((id) => !uploaders.has(id));
     if (missing.length > 0) {
       return {
-        result: latest,
         match,
         status: 'held_for_review',
         detail: 'Both players must upload a post-match screenshot before escrow releases.',
@@ -194,7 +221,6 @@ async function resolveBothReports(
       `Screenshot verification failed: ${rejected.map((s) => s.verdict).join(', ')}`,
     );
     return {
-      result: latest,
       match: await findMatchById(match.id).then((m) => m!),
       status: 'disputed',
       detail: `Screenshot verification failed — dispute ${dispute.id} opened.`,
@@ -208,23 +234,32 @@ async function resolveBothReports(
       'Low-trust matchup routed to manual review',
     );
     return {
-      result: latest,
       match: await findMatchById(match.id).then((m) => m!),
       status: 'held_for_review',
       detail: `Held for review — case ${dispute.id}.`,
     };
   }
 
-  const settled = await settleMatch({
-    matchId: match.id,
-    outcome: verdict.outcome!,
-    creatorScore: verdict.creatorScore,
-    opponentScore: verdict.opponentScore,
-    source: 'auto_agreement',
-  });
+  let settled;
+  try {
+    settled = await settleMatch({
+      matchId: match.id,
+      outcome: verdict.outcome!,
+      creatorScore: verdict.creatorScore,
+      opponentScore: verdict.opponentScore,
+      source: 'auto_agreement',
+    });
+  } catch (err) {
+    // Two screenshots finishing analysis at once both reach here; the row lock
+    // lets exactly one settle and the other must not treat that as a failure.
+    if (err instanceof AppError && err.code === 'already_settled') {
+      const already = (await findMatchById(match.id))!;
+      return { match: already, status: 'settled', detail: 'Settled.' };
+    }
+    throw err;
+  }
 
   return {
-    result: latest,
     match: settled.match,
     status: 'settled',
     detail:
@@ -270,7 +305,22 @@ export async function sweepLapsedMatches(): Promise<string[]> {
 
   for (const match of lapsed) {
     const reports = await listResults(match.id);
-    if (reports.length >= 2) continue; // a settle is already in flight
+
+    if (reports.length >= 2) {
+      // Both players reported but the match never settled — it is waiting on
+      // evidence that has not arrived. Give it one more chance to conclude,
+      // and escalate rather than leaving the escrow stuck forever.
+      const outcome = await finaliseIfPossible(match.id);
+      if (outcome.status === 'held_for_review') {
+        await openDisputeForMatch(
+          match,
+          null,
+          'Reports agree but the required screenshots were never uploaded',
+        );
+        handled.push(match.id);
+      }
+      continue;
+    }
 
     const reporterId = reports[0]?.reporterId ?? null;
     const silentId =
