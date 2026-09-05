@@ -4,7 +4,7 @@ import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
 import { deposit, withdraw } from '../src/modules/wallet/wallet.service';
 import { updateResponsiblePlay, selfExclude, submitKyc } from '../src/modules/onboarding/profile.service';
 import { getWallet, reconcileWallets } from '../src/db/repos/ledger.repo';
-import { listOpenFraudFlags, upsertBlockedRegion } from '../src/db/repos/fraud.repo';
+import { listOpenFraudFlags, recordDevice, upsertBlockedRegion } from '../src/db/repos/fraud.repo';
 import { findUserById, updateUser } from '../src/db/repos/users.repo';
 import { setSetting } from '../src/common/settings';
 import { ageOn } from '../src/common/geo';
@@ -107,6 +107,18 @@ describe('linked accounts', () => {
 
     const match = await createMatch(alice, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
     await expect(joinMatch(alt, match.id)).rejects.toMatchObject({ code: 'linked_accounts' });
+  });
+
+  it('allows a shared network but flags it, rather than blocking flatmates', async () => {
+    const alice = await makeUser({ balanceCents: 5000 });
+    const flatmate = await makeUser({ balanceCents: 5000 });
+    // Same IP, different devices — a household, not necessarily a fraudster.
+    await recordDevice({ userId: alice.id, fingerprint: 'device-a', ip: '198.51.100.4', userAgent: 'jest' });
+    await recordDevice({ userId: flatmate.id, fingerprint: 'device-b', ip: '198.51.100.4', userAgent: 'jest' });
+
+    const match = await createMatch(alice, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await expect(joinMatch(flatmate, match.id)).resolves.toMatchObject({ status: 'escrowed' });
+    expect((await listOpenFraudFlags()).map((f) => f.kind)).toContain('weak_account_link');
   });
 
   it('lets unrelated accounts play normally', async () => {

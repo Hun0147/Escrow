@@ -29,7 +29,7 @@ import {
   listScreenshotsForMatch,
   findDisputeByMatch,
 } from '../../db/repos/misc.repo';
-import { areAccountsLinked, raiseFraudFlag } from '../../db/repos/fraud.repo';
+import { assessAccountLink, raiseFraudFlag } from '../../db/repos/fraud.repo';
 import { lockStake, refundSingleStake } from '../wallet/money.service';
 import { assertWithinLossLimit } from '../wallet/wallet.service';
 import { badRequest, conflict, forbidden, notFound } from '../../common/errors';
@@ -100,20 +100,31 @@ export async function joinMatch(user: UserRow, matchId: string): Promise<Match> 
 
   // Self-matching between linked accounts turns the platform into a money
   // mover: lose on purpose, and the only cost is the rake. The check runs
-  // before the money transaction so that the flag survives the rejection —
-  // rolling it back with the failed join would erase the evidence.
-  const links = await areAccountsLinked(user.id, target.creatorId);
-  if (links.length > 0) {
+  // before the money transaction so the flag survives the rejection — rolling
+  // it back with the failed join would erase the evidence.
+  const link = await assessAccountLink(user.id, target.creatorId);
+  if (link.blocking.length > 0) {
     await raiseFraudFlag({
       userId: user.id,
       relatedUserId: target.creatorId,
       kind: 'self_match_attempt',
-      detail: `Blocked join on match ${target.id}: ${links.join(', ')}`,
+      detail: `Blocked join on match ${target.id}: ${link.blocking.join(', ')}`,
     });
     throw forbidden(
       'linked_accounts',
-      'You cannot play an account linked to yours by device, network or payment method',
+      'You cannot play an account that shares a device or payment method with yours',
     );
+  }
+  if (link.reasons.length > 0) {
+    // A weaker signal — shared network only. Let the match happen, but put it
+    // in front of a human, because two accounts on one address playing each
+    // other repeatedly is exactly what collusion looks like.
+    await raiseFraudFlag({
+      userId: user.id,
+      relatedUserId: target.creatorId,
+      kind: 'weak_account_link',
+      detail: `Joined match ${target.id} despite: ${link.reasons.join(', ')}`,
+    });
   }
 
   const match = await withTransaction(async (client) => {

@@ -5,7 +5,7 @@ import { authRouter } from './modules/auth/auth.routes';
 import { meRouter, usersRouter } from './modules/onboarding/profile.routes';
 import { walletRouter } from './modules/wallet/wallet.routes';
 import { matchesRouter } from './modules/matches/matches.routes';
-import { disputesRouter } from './modules/disputes/disputes.routes';
+import { disputesRouter, evidenceRouter } from './modules/disputes/disputes.routes';
 import { tournamentsRouter } from './modules/tournaments/tournaments.routes';
 import { adminRouter } from './modules/admin/admin.routes';
 
@@ -43,6 +43,7 @@ export function createApp() {
   app.use('/wallet', walletRouter);
   app.use('/matches', matchesRouter);
   app.use('/disputes', disputesRouter);
+  app.use('/evidence', evidenceRouter);
   app.use('/tournaments', tournamentsRouter);
   app.use('/admin', adminRouter);
 

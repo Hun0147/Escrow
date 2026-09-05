@@ -64,10 +64,27 @@ disputesRouter.post(
   }),
 );
 
-/** Evidence is served through the API, never as a public URL: a screenshot is
- *  visible to its match participants and to moderators, and to nobody else. */
-disputesRouter.get(
-  '/screenshots/:screenshotId/image',
+/**
+ * Evidence images.
+ *
+ * Served through the API, never as a public URL: a screenshot is visible to
+ * its match participants and to moderators, and to nobody else. This is the
+ * one route that also accepts the token as a query parameter, because an
+ * `<img>` tag cannot send an Authorization header — hence its own router,
+ * rather than widening the rule for every endpoint.
+ */
+export const evidenceRouter = Router();
+
+evidenceRouter.use((req, _res, next) => {
+  if (!req.headers.authorization && typeof req.query.token === 'string') {
+    req.headers.authorization = `Bearer ${req.query.token}`;
+  }
+  next();
+});
+evidenceRouter.use(requireAuth);
+
+evidenceRouter.get(
+  '/:screenshotId',
   handler(async (req, res) => {
     const { buffer, contentType } = await screenshots.screenshotBytes(
       req.currentUser!,

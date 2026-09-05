@@ -8,7 +8,8 @@
     "start": "node dist/server.js",
     "migrate": "ts-node src/db/migrate.ts",
     "test": "DATABASE_URL=\"${TEST_DATABASE_URL:-postgres://escrow:escrow@localhost:5432/escrow_test}\" EVIDENCE_DIR=\"${EVIDENCE_DIR:-/tmp/goal27-test-evidence}\" jest --runInBand",
-    "worker": "node dist/queue/worker-main.js"
+    "worker": "node dist/queue/worker-main.js",
+    "seed": "DATABASE_URL=\"${DATABASE_URL:-postgres://escrow:escrow@localhost:5432/escrow}\" ts-node src/db/seed.ts"
   },
   "dependencies": {
     "@escrow/shared": "0.1.0",

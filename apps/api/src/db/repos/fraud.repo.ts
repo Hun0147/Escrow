@@ -70,13 +70,34 @@ export async function findLinkedAccounts(
   return rows.map((row) => ({ userId: row.user_id, reasons: row.reasons }));
 }
 
-export async function areAccountsLinked(
+/**
+ * Signals strong enough to refuse a match outright.
+ *
+ * A shared IP is deliberately NOT one of them: flatmates, a family console and
+ * anyone behind carrier-grade NAT share an address, and blocking them would
+ * break a real use case to stop a fraud they may not be committing. It is
+ * still recorded, so a moderator sees the pattern if it recurs.
+ */
+export const BLOCKING_LINK_REASONS = ['shared_device', 'shared_payment_method'] as const;
+
+export interface LinkAssessment {
+  reasons: string[];
+  blocking: string[];
+}
+
+export async function assessAccountLink(
   userA: string,
   userB: string,
   db: Queryable = pool,
-): Promise<string[]> {
+): Promise<LinkAssessment> {
   const linked = await findLinkedAccounts(userA, db);
-  return linked.find((entry) => entry.userId === userB)?.reasons ?? [];
+  const reasons = linked.find((entry) => entry.userId === userB)?.reasons ?? [];
+  return {
+    reasons,
+    blocking: reasons.filter((reason) =>
+      (BLOCKING_LINK_REASONS as readonly string[]).includes(reason),
+    ),
+  };
 }
 
 export async function raiseFraudFlag(
