@@ -5,6 +5,7 @@ import { invalidateSettingsCache } from '../src/common/settings';
 import { setMatchmakingQueue } from '../src/queue/matchmaking';
 import { setEvidenceStore } from '../src/storage';
 import { setOcrEngine } from '../src/ocr/engine';
+import { setPaymentProvider } from '../src/payments';
 
 // Configuration is seeded by a migration; tests are allowed to change it, so
 // it is wiped and re-seeded rather than left to leak between cases.
@@ -15,6 +16,7 @@ const SEED_SQL = readFileSync(
 
 
 const TABLES = [
+  'payment_events',
   'subscriptions',
   'admin_actions',
   'fraud_flags',
@@ -50,6 +52,7 @@ beforeEach(async () => {
   setMatchmakingQueue(null);
   setEvidenceStore(null);
   setOcrEngine(null);
+  setPaymentProvider(null);
 });
 
 afterAll(async () => {

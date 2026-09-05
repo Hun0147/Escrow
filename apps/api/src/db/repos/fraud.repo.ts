@@ -210,18 +210,123 @@ export async function completePaymentIntent(
   );
 }
 
-/** Total of successful movements in one direction over a rolling window. */
+export async function attachProviderRef(
+  id: string,
+  providerRef: string,
+  db: Queryable = pool,
+): Promise<void> {
+  await db.query('UPDATE payment_intents SET provider_ref = $2 WHERE id = $1', [id, providerRef]);
+}
+
+export interface PaymentIntentRow {
+  id: string;
+  userId: string;
+  direction: 'deposit' | 'withdrawal';
+  provider: string;
+  providerRef: string | null;
+  amountCents: number;
+  status: 'pending' | 'succeeded' | 'failed' | 'cancelled';
+}
+
+function mapIntent(row: any): PaymentIntentRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    direction: row.direction,
+    provider: row.provider,
+    providerRef: row.provider_ref,
+    amountCents: Number(row.amount_cents),
+    status: row.status,
+  };
+}
+
+export async function findPaymentIntent(
+  id: string,
+  db: Queryable = pool,
+): Promise<PaymentIntentRow | null> {
+  const { rows } = await db.query('SELECT * FROM payment_intents WHERE id = $1', [id]);
+  return rows[0] ? mapIntent(rows[0]) : null;
+}
+
+export async function findPaymentIntentByRef(
+  provider: string,
+  providerRef: string,
+  db: Queryable = pool,
+): Promise<PaymentIntentRow | null> {
+  const { rows } = await db.query(
+    'SELECT * FROM payment_intents WHERE provider = $1 AND provider_ref = $2',
+    [provider, providerRef],
+  );
+  return rows[0] ? mapIntent(rows[0]) : null;
+}
+
+/**
+ * Marks a pending intent succeeded, and reports whether THIS call is the one
+ * that did it.
+ *
+ * The whole idempotency of the deposit path rests here: a webhook can be
+ * delivered any number of times, and only the caller that flips the row out of
+ * 'pending' is allowed to credit the ledger.
+ */
+export async function claimPaymentIntent(
+  id: string,
+  db: Queryable,
+): Promise<PaymentIntentRow | null> {
+  const { rows } = await db.query(
+    `UPDATE payment_intents SET status = 'succeeded', completed_at = now()
+     WHERE id = $1 AND status = 'pending' RETURNING *`,
+    [id],
+  );
+  return rows[0] ? mapIntent(rows[0]) : null;
+}
+
+/** Records an accepted webhook. Returns false if we have seen it before. */
+export async function recordPaymentEvent(
+  params: {
+    provider: string;
+    eventId: string;
+    eventType: string;
+    paymentIntentId: string | null;
+    payload: unknown;
+  },
+  db: Queryable = pool,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `INSERT INTO payment_events (provider, event_id, event_type, payment_intent_id, payload)
+     VALUES ($1, $2, $3, $4, $5::jsonb)
+     ON CONFLICT (provider, event_id) DO NOTHING
+     RETURNING id`,
+    [
+      params.provider,
+      params.eventId,
+      params.eventType,
+      params.paymentIntentId,
+      JSON.stringify(params.payload ?? {}),
+    ],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Total moved in one direction over a rolling window.
+ *
+ * `includePending` counts money still in flight as well as money taken — a
+ * limit that ignored pending intents could be stepped over by firing several
+ * deposits before any of them confirm.
+ */
 export async function sumRecentPayments(
   userId: string,
   direction: 'deposit' | 'withdrawal',
   windowHours: number,
-  db: Queryable = pool,
+  options: { includePending?: boolean; db?: Queryable } = {},
 ): Promise<number> {
+  const db = options.db ?? pool;
+  const statuses = options.includePending ? ['succeeded', 'pending'] : ['succeeded'];
   const { rows } = await db.query(
     `SELECT COALESCE(SUM(amount_cents), 0) AS total FROM payment_intents
-     WHERE user_id = $1 AND direction = $2 AND status = 'succeeded'
-       AND created_at > now() - ($3 || ' hours')::interval`,
-    [userId, direction, String(windowHours)],
+     WHERE user_id = $1 AND direction = $2 AND status = ANY($3::text[])
+       AND created_at > now() - ($4 || ' hours')::interval`,
+    [userId, direction, statuses, String(windowHours)],
   );
   return Number(rows[0].total);
 }

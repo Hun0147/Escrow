@@ -83,7 +83,9 @@ describe('HTTP surface', () => {
         .set('Authorization', bearer(player.id))
         .send({ amountCents: 5000 });
       expect(deposit.status).toBe(200);
-      expect(deposit.body.availableCents).toBe(5000);
+      // The mock provider captures instantly, so the balance is already there.
+      expect(deposit.body.status).toBe('captured');
+      expect(deposit.body.wallet.availableCents).toBe(5000);
     }
 
     const created = await request(app)

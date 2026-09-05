@@ -4,17 +4,24 @@ import { withTransaction } from '../../db/transaction';
 import { UserRow } from '../../db/repos/users.repo';
 import { accountHistory, getWallet } from '../../db/repos/ledger.repo';
 import {
+  attachProviderRef,
+  claimPaymentIntent,
   completePaymentIntent,
   countRecentPayments,
+  findPaymentIntent,
+  findPaymentIntentByRef,
   insertPaymentIntent,
   raiseFraudFlag,
+  recordPaymentEvent,
   recordPaymentMethod,
   sumRecentPayments,
 } from '../../db/repos/fraud.repo';
+import { paymentProvider } from '../../payments';
 import { getSetting } from '../../common/settings';
 import { badRequest, forbidden, notFound, tooManyRequests } from '../../common/errors';
 import { assertPositiveAmount, creditDeposit, debitWithdrawal } from './money.service';
 import { notify } from '../notifications/notifications.service';
+import { realtime } from '../../realtime/bus';
 
 /** Deposits allowed in this window before the account is throttled. */
 const DEPOSIT_BURST_LIMIT = 5;
@@ -27,21 +34,31 @@ export type PaymentProvider = 'mock' | 'stripe' | 'paypal' | 'bank';
 export interface DepositParams {
   user: UserRow;
   amountCents: number;
-  provider?: PaymentProvider;
   /** Processor-side instrument fingerprint — never a card number. */
   instrumentFingerprint?: string | null;
   instrumentKind?: 'card' | 'paypal' | 'bank';
 }
 
+export interface DepositResult {
+  intentId: string;
+  provider: string;
+  /** 'captured' means the wallet is already credited; 'pending' means the
+   *  client must complete the payment and the webhook will credit it. */
+  status: 'captured' | 'pending';
+  clientSecret?: string;
+  wallet: Wallet | null;
+}
+
 /**
- * Mock deposit.
+ * Starts a deposit.
  *
- * The provider call is stubbed, but everything around it is real: limits,
- * throttles, the payment_intents record and the ledger posting. Dropping in
- * Stripe Connect means replacing `settleWithProvider` with a webhook-confirmed
- * capture, not rewriting this flow.
+ * Limits and throttles are checked before the provider is called, and the
+ * ledger is credited only once the provider says the money is captured. With
+ * a real processor that confirmation arrives by webhook, so this returns
+ * `pending` and the balance does not move yet — crediting on the client's
+ * say-so is how a platform gets drained.
  */
-export async function deposit(params: DepositParams): Promise<Wallet> {
+export async function deposit(params: DepositParams): Promise<DepositResult> {
   const { user, amountCents } = params;
   assertPositiveAmount(amountCents, 'Deposit');
 
@@ -55,7 +72,9 @@ export async function deposit(params: DepositParams): Promise<Wallet> {
     throw tooManyRequests('deposit_rate_limited', 'Too many deposits in a short window — try again later');
   }
 
-  const dailyTotal = await sumRecentPayments(user.id, 'deposit', 24);
+  // The cap counts money already taken plus anything still in flight, so a
+  // burst of pending intents cannot be used to step over the limit.
+  const dailyTotal = await sumRecentPayments(user.id, 'deposit', 24, { includePending: true });
   const platformCap = await getSetting('daily_deposit_cap_cents');
   const personalCap = await personalDepositLimit(user.id);
   const cap = personalCap === null ? platformCap : Math.min(platformCap, personalCap);
@@ -66,10 +85,11 @@ export async function deposit(params: DepositParams): Promise<Wallet> {
     );
   }
 
+  const provider = paymentProvider();
   const intent = await insertPaymentIntent({
     userId: user.id,
     direction: 'deposit',
-    provider: params.provider ?? 'mock',
+    provider: provider.name,
     amountCents,
   });
 
@@ -81,19 +101,114 @@ export async function deposit(params: DepositParams): Promise<Wallet> {
     });
   }
 
-  const wallet = await withTransaction(async (client) => {
-    await creditDeposit(client, user.id, amountCents, `Deposit ${intent.id}`);
-    return (await getWallet(user.id, client))!;
+  let ticket;
+  try {
+    ticket = await provider.createDeposit({
+      intentId: intent.id,
+      userId: user.id,
+      amountCents,
+      instrumentFingerprint: params.instrumentFingerprint ?? null,
+    });
+  } catch (err) {
+    await completePaymentIntent(intent.id, 'failed', (err as Error).message);
+    throw err;
+  }
+  await attachProviderRef(intent.id, ticket.providerRef);
+
+  if (!ticket.captured) {
+    return {
+      intentId: intent.id,
+      provider: provider.name,
+      status: 'pending',
+      clientSecret: ticket.clientSecret,
+      wallet: await getWallet(user.id),
+    };
+  }
+
+  const wallet = await captureDeposit(intent.id);
+  return { intentId: intent.id, provider: provider.name, status: 'captured', wallet };
+}
+
+/**
+ * Credits a captured deposit. Safe to call repeatedly — only the call that
+ * moves the intent out of 'pending' writes to the ledger, so a webhook
+ * redelivered five times still credits once.
+ */
+export async function captureDeposit(intentId: string): Promise<Wallet | null> {
+  const credited = await withTransaction(async (client) => {
+    const claimed = await claimPaymentIntent(intentId, client);
+    if (!claimed) return null; // already handled, or never pending
+    await creditDeposit(client, claimed.userId, claimed.amountCents, `Deposit ${claimed.id}`);
+    return claimed;
   });
 
-  await completePaymentIntent(intent.id, 'succeeded', null);
+  if (!credited) {
+    const existing = await findPaymentIntent(intentId);
+    return existing ? getWallet(existing.userId) : null;
+  }
+
+  const wallet = await getWallet(credited.userId);
+  if (wallet) realtime.toUser(credited.userId, 'wallet:updated', wallet);
   await notify({
-    userId: user.id,
+    userId: credited.userId,
     type: 'wallet_credited',
     title: 'Deposit complete',
-    body: `${amountCents} cents added to your wallet.`,
+    body: `${credited.amountCents} cents added to your wallet.`,
   });
   return wallet;
+}
+
+/**
+ * Handles a provider webhook: verify, de-duplicate, then act.
+ *
+ * Verification happens in the provider (it owns the signature scheme); this
+ * decides what the event means for the ledger.
+ */
+export async function handlePaymentWebhook(
+  rawBody: Buffer,
+  signature: string | undefined,
+): Promise<{ handled: boolean; reason: string }> {
+  const provider = paymentProvider();
+  const event = provider.parseWebhook(rawBody, signature);
+
+  const intent = event.providerRef
+    ? await findPaymentIntentByRef(provider.name, event.providerRef)
+    : null;
+
+  const fresh = await recordPaymentEvent({
+    provider: provider.name,
+    eventId: event.id,
+    eventType: event.type,
+    paymentIntentId: intent?.id ?? null,
+    payload: JSON.parse(rawBody.toString('utf8')),
+  });
+  if (!fresh) return { handled: false, reason: 'duplicate_event' };
+  if (!intent) return { handled: false, reason: 'unknown_payment' };
+
+  // A provider reporting a different amount than we recorded is not a payment
+  // to credit — it is an incident.
+  if (event.amountCents !== null && event.amountCents !== intent.amountCents) {
+    await raiseFraudFlag({
+      userId: intent.userId,
+      kind: 'payment_amount_mismatch',
+      detail: `Webhook ${event.id} reports ${event.amountCents} cents against an intent for ${intent.amountCents}`,
+    });
+    return { handled: false, reason: 'amount_mismatch' };
+  }
+
+  if (event.type.endsWith('.succeeded') || event.type.endsWith('.paid')) {
+    await captureDeposit(intent.id);
+    return { handled: true, reason: 'captured' };
+  }
+  if (event.type.endsWith('.payment_failed') || event.type.endsWith('.failed')) {
+    await completePaymentIntent(intent.id, 'failed', event.type);
+    return { handled: true, reason: 'failed' };
+  }
+  if (event.type.endsWith('.canceled') || event.type.endsWith('.cancelled')) {
+    await completePaymentIntent(intent.id, 'cancelled', event.type);
+    return { handled: true, reason: 'cancelled' };
+  }
+  return { handled: false, reason: 'ignored_event_type' };
 }
 
 export interface WithdrawParams {
@@ -145,11 +260,23 @@ export async function withdraw(params: WithdrawParams): Promise<Wallet> {
   });
 
   try {
+    // Debit first: the funds are reserved before we ask the provider to move
+    // them, so a slow payout cannot be spent twice in the meantime. A provider
+    // failure refunds below.
     const wallet = await withTransaction(async (client) => {
       await debitWithdrawal(client, user.id, amountCents, `Withdrawal ${intent.id} via ${params.method}`);
       return (await getWallet(user.id, client))!;
     });
-    await completePaymentIntent(intent.id, 'succeeded', null);
+
+    const ticket = await paymentProvider().createPayout({
+      intentId: intent.id,
+      userId: user.id,
+      amountCents,
+      method: params.method,
+    });
+    await attachProviderRef(intent.id, ticket.providerRef);
+    // A payout that has not settled stays pending until the provider says so.
+    if (ticket.settled) await completePaymentIntent(intent.id, 'succeeded', null);
     await notify({
       userId: user.id,
       type: 'wallet_debited',
@@ -159,8 +286,28 @@ export async function withdraw(params: WithdrawParams): Promise<Wallet> {
     return wallet;
   } catch (err) {
     await completePaymentIntent(intent.id, 'failed', (err as Error).message);
+    // If the debit went through but the provider did not, the money is ours to
+    // give back immediately — a failed payout must never eat a balance.
+    const intentRow = await findPaymentIntent(intent.id);
+    if (intentRow && (await debitAlreadyPosted(intent.id))) {
+      await withTransaction((client) =>
+        creditDeposit(client, user.id, amountCents, `Reversal of failed withdrawal ${intent.id}`),
+      );
+      const restored = await getWallet(user.id);
+      if (restored) realtime.toUser(user.id, 'wallet:updated', restored);
+    }
     throw err;
   }
+}
+
+/** Did the withdrawal's ledger debit actually post before the failure? */
+async function debitAlreadyPosted(intentId: string): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM ledger_transactions
+     WHERE type = 'withdrawal' AND memo LIKE $1 LIMIT 1`,
+    [`Withdrawal ${intentId}%`],
+  );
+  return rows.length > 0;
 }
 
 async function flagRapidCycling(userId: string, amountCents: number): Promise<void> {

@@ -60,17 +60,25 @@ export default function WalletPage() {
     setError(null);
     setNotice(null);
     try {
-      await api(`/wallet/${direction}`, {
-        body:
-          direction === 'deposit'
-            ? { amountCents: amount, provider: 'mock', instrumentFingerprint: `dev-card-${user!.id.slice(0, 8)}` }
-            : { amountCents: amount, method },
-      });
-      setNotice(
-        direction === 'deposit'
-          ? `${formatCents(amount)} added.`
-          : `${formatCents(amount)} sent via ${method}.`,
-      );
+      if (direction === 'deposit') {
+        const result = await api<{ status: 'captured' | 'pending' }>('/wallet/deposit', {
+          body: {
+            amountCents: amount,
+            instrumentFingerprint: `dev-card-${user!.id.slice(0, 8)}`,
+          },
+        });
+        // With a live processor the balance moves only once the provider's
+        // webhook confirms, so say so rather than claiming money that is not
+        // there yet.
+        setNotice(
+          result.status === 'captured'
+            ? `${formatCents(amount)} added.`
+            : `${formatCents(amount)} authorised — it lands as soon as your bank confirms.`,
+        );
+      } else {
+        await api('/wallet/withdraw', { body: { amountCents: amount, method } });
+        setNotice(`${formatCents(amount)} sent via ${method}.`);
+      }
       await Promise.all([refresh(), load()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not complete that');

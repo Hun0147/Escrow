@@ -10,7 +10,6 @@ walletRouter.use(requireAuth);
 
 const depositSchema = z.object({
   amountCents: z.number().int().positive(),
-  provider: z.enum(['mock', 'stripe', 'paypal', 'bank']).optional(),
   instrumentFingerprint: z.string().min(4).max(128).optional(),
   instrumentKind: z.enum(['card', 'paypal', 'bank']).optional(),
 });

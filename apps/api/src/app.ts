@@ -9,9 +9,14 @@ import { disputesRouter, evidenceRouter } from './modules/disputes/disputes.rout
 import { tournamentsRouter } from './modules/tournaments/tournaments.routes';
 import { adminRouter } from './modules/admin/admin.routes';
 import { subscriptionRouter } from './modules/subscriptions/subscriptions.routes';
+import { webhookRouter } from './modules/wallet/webhooks.routes';
 
 export function createApp() {
   const app = express();
+
+  // Webhooks must see the exact bytes the provider signed, so they are mounted
+  // ahead of the JSON parser and read their body raw.
+  app.use('/webhooks', webhookRouter);
 
   // Screenshots arrive as base64 in JSON, so the body limit has to clear the
   // 8 MB upload cap with room for the encoding overhead.
