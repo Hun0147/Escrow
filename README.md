@@ -84,17 +84,52 @@ Configuration, all optional:
 ## Tests
 
 ```bash
-createdb escrow_test -O escrow
 npm test
 ```
 
-169 tests across 12 suites, run against a real PostgreSQL database rather than a
-stub — the money paths are only meaningful if the transactions, row locks and
-constraints are real. Migrations are applied once before the suite; tables are
-truncated between cases.
+That is the whole setup. With a PostgreSQL running, the suite creates its own
+`escrow_test` database if it is missing and applies the migrations; if it
+cannot reach one, it says so in a line you can act on rather than a stack
+trace. Point it elsewhere with `TEST_DATABASE_URL`.
 
-Every test that moves money finishes by asserting `reconcileWallets()` returns
-an empty array: the cached wallet balances and the ledger agree exactly.
+No local Postgres? One container is enough:
+
+```bash
+docker run -d -p 5432:5432 \
+  -e POSTGRES_USER=escrow -e POSTGRES_PASSWORD=escrow -e POSTGRES_DB=escrow_test \
+  postgres:16
+npm test
+```
+
+169 tests across 12 suites, run against a real PostgreSQL rather than a stub —
+the money paths are only meaningful if the transactions, row locks and
+constraints are real. Tables are truncated between cases and the seeded
+configuration is restored, so no test can leak a changed fee rate or a blocked
+region into the next one.
+
+**Every test that moves money finishes by asserting `reconcileWallets()`
+returns an empty array**: the cached wallet balances and the ledger agree
+exactly. That one assertion is what makes the rest trustworthy — a payout that
+credited the wrong account, or a fee that went missing, shows up there even if
+the test's own expectations were wrong.
+
+| Suite | What it pins down |
+|---|---|
+| `settlement` | Fee and payout arithmetic — no cent created or lost at any stake or rate |
+| `escrow-fee` | Where the fee is charged, and every case where it must not be |
+| `ledger` | Append-only enforcement, accounts summing to zero, no negative wallet under concurrency |
+| `match-flow` | Create, join, ready, report, auto-settle, forfeit, cancel, concurrent joins |
+| `verification` | Perceptual hashing, OCR parsing, duplicate and mismatch handling, evidence-gated settlement |
+| `disputes` | Escrow held while contested, moderator rulings, trust consequences, deadline escalation |
+| `payments` | Webhook signatures, replay, idempotency, amount mismatch, failed-payout reversal |
+| `antifraud` | Age gate, geofence, linked accounts, deposit and loss limits, responsible play |
+| `subscriptions` | Charge, cancel at period end, renewal, lapse, Pro rate, priority matchmaking |
+| `tournaments` | Entry escrow, bracket draw, byes, prize payout, cancellation refunds |
+| `session-clock` | Session reminders keyed to the player rather than the connection |
+| `http` | The API surface end to end over HTTP, including authorisation boundaries |
+
+Every push and pull request runs the same commands in CI
+(`.github/workflows/ci.yml`) against a `postgres:16` service container.
 
 ---
 
