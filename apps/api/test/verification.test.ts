@@ -1,0 +1,342 @@
+import {
+  DUPLICATE_HAMMING_THRESHOLD,
+  compareOcrToReport,
+  dHash,
+  hammingDistance,
+  parseScoreboard,
+  toGrayscale,
+} from '@escrow/shared';
+import { decodeToGrayscale } from '../src/ocr/image';
+import { SidecarOcrEngine } from '../src/ocr/engine';
+import { encodePng, scoreboardImage } from './png';
+import { makeUser, ULTIMATE_TEAM } from './factories';
+import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
+import { uploadScreenshot } from '../src/modules/screenshots/screenshots.service';
+import { submitResult } from '../src/modules/results/results.service';
+import { drainOcrQueue } from '../src/queue/ocr-worker';
+import { findScreenshotById, listScreenshotsForMatch } from '../src/db/repos/misc.repo';
+import { listOpenFraudFlags } from '../src/db/repos/fraud.repo';
+import { findMatchById } from '../src/db/repos/matches.repo';
+import { accountBalance, reconcileWallets } from '../src/db/repos/ledger.repo';
+import { matchEscrow } from '@escrow/shared';
+
+const FUT_SCREEN = `FULL TIME
+MATCH FACTS
+Striker_Sam    3 - 1    KeeperKate
+Possession 54% 46%
+Shots 12 8`;
+
+describe('perceptual hashing', () => {
+  it('gives the same hash to an image re-encoded at a different size', () => {
+    const large = decodeToGrayscale(scoreboardImage(192, 128), 'image/png')!;
+    const small = decodeToGrayscale(scoreboardImage(96, 64), 'image/png')!;
+    expect(hammingDistance(dHash(large), dHash(small))).toBeLessThanOrEqual(
+      DUPLICATE_HAMMING_THRESHOLD,
+    );
+  });
+
+  it('separates two genuinely different screenshots', () => {
+    const a = decodeToGrayscale(scoreboardImage(96, 64, 1), 'image/png')!;
+    const b = decodeToGrayscale(scoreboardImage(96, 64, 9), 'image/png')!;
+    expect(hammingDistance(dHash(a), dHash(b))).toBeGreaterThan(DUPLICATE_HAMMING_THRESHOLD);
+  });
+
+  it('produces a 16-character hex hash', () => {
+    const image = toGrayscale(new Uint8Array(32 * 32 * 4).fill(120), 32, 32);
+    expect(dHash(image)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('refuses to compare hashes of different lengths', () => {
+    expect(() => hammingDistance('abcd', 'abcdef')).toThrow(/same length/);
+  });
+
+  it('decodes a real PNG down to luminance', () => {
+    const png = encodePng(4, 2, () => [255, 255, 255]);
+    const gray = decodeToGrayscale(png, 'image/png');
+    expect(gray).not.toBeNull();
+    expect(gray!.width).toBe(4);
+    expect(gray!.height).toBe(2);
+    expect([...gray!.data]).toEqual([255, 255, 255, 255, 255, 255, 255, 255]);
+  });
+});
+
+describe('scoreboard OCR parsing', () => {
+  it('reads the scoreline and both gamertags off a FUT match-facts screen', () => {
+    const parsed = parseScoreboard(FUT_SCREEN);
+    expect(parsed.homeScore).toBe(3);
+    expect(parsed.awayScore).toBe(1);
+    expect(parsed.homeTag).toBe('Striker_Sam');
+    expect(parsed.awayTag).toBe('KeeperKate');
+    expect(parsed.confidence).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('copes with a stacked layout and OCR punctuation noise', () => {
+    const parsed = parseScoreboard(`FULL TIME\nStriker_Sam\n2 : 2\nKeeperKate`);
+    expect(parsed.homeScore).toBe(2);
+    expect(parsed.awayScore).toBe(2);
+    expect(parsed.homeTag).toBe('Striker_Sam');
+    expect(parsed.awayTag).toBe('KeeperKate');
+  });
+
+  it('ignores stat lines that merely look like a scoreline', () => {
+    const parsed = parseScoreboard('Possession 54 - 46\nFULL TIME\nSam_A 1 - 0 Kate_B');
+    // 54-46 is rejected as out of range for a football score.
+    expect(parsed.homeScore).toBe(1);
+    expect(parsed.awayScore).toBe(0);
+  });
+
+  it('reports no confidence when there is nothing to read', () => {
+    const parsed = parseScoreboard('');
+    expect(parsed.homeScore).toBeNull();
+    expect(parsed.confidence).toBe(0);
+  });
+});
+
+describe('comparing OCR to the typed result', () => {
+  const tags = { reporterPsnId: 'Striker_Sam', opponentPsnId: 'KeeperKate' };
+
+  it('accepts a screenshot that backs up the report, either way round', () => {
+    const parsed = parseScoreboard(FUT_SCREEN);
+    expect(compareOcrToReport(parsed, { selfScore: 3, opponentScore: 1 }, tags).scoreMatches).toBe(true);
+    expect(compareOcrToReport(parsed, { selfScore: 1, opponentScore: 3 }, tags).scoreMatches).toBe(true);
+    expect(compareOcrToReport(parsed, { selfScore: 3, opponentScore: 1 }, tags).gamertagsMatch).toBe(true);
+  });
+
+  it('flags a scoreline the screenshot does not support', () => {
+    const comparison = compareOcrToReport(
+      parseScoreboard(FUT_SCREEN),
+      { selfScore: 5, opponentScore: 0 },
+      tags,
+    );
+    expect(comparison.scoreMatches).toBe(false);
+    expect(comparison.flags).toContain('score_mismatch');
+  });
+
+  it('flags a screenshot from a match between other players', () => {
+    const comparison = compareOcrToReport(parseScoreboard(FUT_SCREEN), { selfScore: 3, opponentScore: 1 }, {
+      reporterPsnId: 'SomeoneElse',
+      opponentPsnId: 'AndAnother',
+    });
+    expect(comparison.gamertagsMatch).toBe(false);
+    expect(comparison.flags).toContain('gamertag_mismatch');
+  });
+
+  it('says so plainly when the image is unreadable', () => {
+    const comparison = compareOcrToReport(parseScoreboard('blurry nonsense'), { selfScore: 1, opponentScore: 0 }, tags);
+    expect(comparison.readable).toBe(false);
+    expect(comparison.flags).toContain('ocr_unreadable');
+  });
+});
+
+describe('screenshot pipeline', () => {
+
+  let pairNumber = 0;
+  beforeEach(() => {
+    pairNumber = 0;
+  });
+
+  async function playersAndMatch(trust = 90) {
+    // PSN IDs are globally unique, so each pair needs its own.
+    pairNumber += 1;
+    const creator = await makeUser({
+      balanceCents: 5000,
+      trustScore: trust,
+      psnId: pairNumber === 1 ? 'Striker_Sam' : `Striker_Sam${pairNumber}`,
+    });
+    const opponent = await makeUser({
+      balanceCents: 5000,
+      trustScore: trust,
+      psnId: pairNumber === 1 ? 'KeeperKate' : `KeeperKate${pairNumber}`,
+    });
+    const match = await createMatch(creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(opponent, match.id);
+    return { creator, opponent, match };
+  }
+
+  function upload(image: Buffer, ocrText: string): string {
+    return SidecarOcrEngine.embed(image, ocrText).toString('base64');
+  }
+
+  it('stores evidence immutably with a content hash and queues it for analysis', async () => {
+    const { creator, match } = await playersAndMatch();
+    const screenshot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(), FUT_SCREEN),
+    });
+
+    expect(screenshot.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(screenshot.verdict).toBe('pending');
+
+    const { pool } = await import('../src/db/pool');
+    await expect(
+      pool.query('UPDATE screenshots SET sha256 = $2 WHERE id = $1', [screenshot.id, 'tampered']),
+    ).rejects.toThrow(/immutable/);
+  });
+
+  it('confirms a screenshot that matches the typed result', async () => {
+    const { creator, match } = await playersAndMatch();
+    const screenshot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(), FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: screenshot.id,
+    });
+
+    await drainOcrQueue();
+    const analysed = await findScreenshotById(screenshot.id);
+    expect(analysed!.verdict).toBe('match');
+    expect(analysed!.ocrHomeScore).toBe(3);
+    expect(analysed!.ocrHomeTag).toBe('Striker_Sam');
+    expect(analysed!.perceptualHash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('catches a recycled screenshot and raises a fraud flag', async () => {
+    const first = await playersAndMatch();
+    const image = scoreboardImage(96, 64, 3);
+    const firstShot = await uploadScreenshot(first.creator, {
+      matchId: first.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    // Same player, new match, the very same screenshot.
+    const second = await createMatch(first.creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(first.opponent, second.id);
+    const reused = await uploadScreenshot(first.creator, {
+      matchId: second.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    const analysed = await findScreenshotById(reused.id);
+    expect(analysed!.verdict).toBe('duplicate');
+    expect(analysed!.duplicateOfId).toBe(firstShot.id);
+
+    const flags = await listOpenFraudFlags();
+    expect(flags.map((f) => f.kind)).toContain('duplicate_screenshot');
+  });
+
+  it('catches a crop of an earlier screenshot, not just an identical file', async () => {
+    const first = await playersAndMatch();
+    await uploadScreenshot(first.creator, {
+      matchId: first.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(192, 128, 5), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    const second = await createMatch(first.creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(first.opponent, second.id);
+    // Different bytes, different sha256 — same picture.
+    const rescaled = await uploadScreenshot(first.creator, {
+      matchId: second.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 5), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    expect((await findScreenshotById(rescaled.id))!.verdict).toBe('duplicate');
+  });
+
+  it('flags a screenshot whose scoreline contradicts the report', async () => {
+    const { creator, match } = await playersAndMatch();
+    const screenshot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 7), FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 5,
+      opponentScore: 0,
+      screenshotId: screenshot.id,
+    });
+    await drainOcrQueue();
+
+    const analysed = await findScreenshotById(screenshot.id);
+    expect(analysed!.verdict).toBe('mismatch');
+    expect((await listOpenFraudFlags()).map((f) => f.kind)).toContain('ocr_score_mismatch');
+  });
+
+  it('holds escrow for a low-trust pair until both screenshots are in', async () => {
+    const creator = await makeUser({ balanceCents: 5000, trustScore: 60, psnId: 'Striker_Sam' });
+    const opponent = await makeUser({ balanceCents: 5000, trustScore: 62, psnId: 'KeeperKate' });
+    const match = await createMatch(creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(opponent, match.id);
+
+    await submitResult(creator, { matchId: match.id, selfScore: 3, opponentScore: 1 });
+    const held = await submitResult(opponent, { matchId: match.id, selfScore: 1, opponentScore: 3 });
+
+    expect(held.status).toBe('held_for_review');
+    expect(held.detail).toMatch(/screenshot/i);
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+    expect((await findMatchById(match.id))!.status).toBe('awaiting_results');
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('will not auto-settle over a screenshot that failed verification', async () => {
+    const first = await playersAndMatch();
+    const image = scoreboardImage(96, 64, 11);
+    await uploadScreenshot(first.creator, {
+      matchId: first.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    const second = await createMatch(first.creator, { gameMode: ULTIMATE_TEAM, stakeCents: 1000 });
+    await joinMatch(first.opponent, second.id);
+    const reused = await uploadScreenshot(first.creator, {
+      matchId: second.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await drainOcrQueue();
+    expect((await findScreenshotById(reused.id))!.verdict).toBe('duplicate');
+
+    await submitResult(first.creator, {
+      matchId: second.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: reused.id,
+    });
+    const outcome = await submitResult(first.opponent, {
+      matchId: second.id,
+      selfScore: 1,
+      opponentScore: 3,
+    });
+
+    // The two players agree — but the evidence is recycled, so a human rules.
+    expect(outcome.status).toBe('disputed');
+    expect(await accountBalance(matchEscrow(second.id))).toBe(2000);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('refuses a screenshot belonging to someone else’s match', async () => {
+    const a = await playersAndMatch();
+    const b = await playersAndMatch();
+    const screenshot = await uploadScreenshot(a.creator, {
+      matchId: a.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(), FUT_SCREEN),
+    });
+
+    await expect(
+      submitResult(b.creator, {
+        matchId: b.match.id,
+        selfScore: 1,
+        opponentScore: 0,
+        screenshotId: screenshot.id,
+      }),
+    ).rejects.toMatchObject({ code: 'screenshot_mismatch' });
+    expect(await listScreenshotsForMatch(b.match.id)).toHaveLength(0);
+  });
+});
