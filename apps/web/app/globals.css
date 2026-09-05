@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  /* Numbers carry this product, so the display face is whatever the device
+     renders tightest and widest. No webfont: a stake that arrives late, or
+     reflows, is worse than one in the system UI face. */
+  --font-display: ui-sans-serif, system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+body {
+  @apply bg-pitch-900 text-slate-100 antialiased;
+  /* Faint pitch stripes — enough to read as a football surface, not enough
+     to fight the numbers on top of it. */
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.014) 0px,
+    rgba(255, 255, 255, 0.014) 40px,
+    transparent 40px,
+    transparent 80px
+  );
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-pitch-600 bg-pitch-800/80 p-4 backdrop-blur;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold
+           transition disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply btn bg-volt text-pitch-900 hover:bg-volt-dim;
+  }
+
+  .btn-ghost {
+    @apply btn border border-pitch-500 bg-pitch-700 text-slate-100 hover:border-volt/60;
+  }
+
+  .btn-danger {
+    @apply btn border border-danger/40 bg-danger/10 text-danger hover:bg-danger/20;
+  }
+
+  .field {
+    @apply w-full rounded-xl border border-pitch-500 bg-pitch-900/80 px-3 py-3 text-base
+           text-slate-100 outline-none placeholder:text-slate-500 focus:border-volt/70;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .chip {
+    @apply rounded-full border border-pitch-500 px-3 py-1 text-xs font-semibold text-slate-300;
+  }
+
+  .chip-active {
+    @apply border-volt/70 bg-volt/10 text-volt;
+  }
+
+  /* Stakes are the point of the product: they are always the largest,
+     brightest thing in their container. */
+  .stake {
+    @apply font-display text-3xl font-black tabular-nums tracking-tight text-volt;
+  }
+}
