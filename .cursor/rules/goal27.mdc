@@ -1,0 +1,41 @@
+---
+description: Money-handling invariants for Goal 27. Always applied.
+alwaysApply: true
+---
+
+This codebase holds real players' money in escrow. `CLAUDE.md` at the repo root
+is the full context; these are the rules that must survive every change.
+
+1. **Escrow releases on player agreement or a moderator ruling — nothing else.**
+   One player's report, a timeout, a socket message and an admin's convenience
+   are all insufficient. Every release goes through `settleMatch()` in
+   `apps/api/src/modules/settlement/settlement.service.ts`. Do not add a second
+   release path.
+
+2. **The ledger is append-only and balanced by construction.** Entries are
+   transfers between two named accounts, so all accounts sum to zero. UPDATE and
+   DELETE raise a database exception. Correct mistakes with a compensating
+   transaction, never by editing history.
+
+3. **Wallet balances are a cache of the ledger.** Update them in the same
+   database transaction as the ledger posting they pair with. Any test that
+   moves money must end with `expect(await reconcileWallets()).toEqual([])`.
+
+4. **Money never moves over a websocket.** Sockets are for lobby updates, chat,
+   ready state and notifications. Money moves over HTTP, transactionally.
+
+5. **The acting identity comes from the auth token, never the request body.**
+
+6. **Refunds are never charged a fee.** Draws, voids, replays, moderator
+   refunds, cancelled unjoined matches and reversed withdrawals return the full
+   amount. The fee rate resolves only through `apps/api/src/common/fees.ts`.
+
+7. **Screenshots are immutable once uploaded.** A database trigger enforces it.
+   Only OCR/verdict columns may change.
+
+8. **All money is integer cents.** Never a float, never a string.
+
+When adding a money path, write the test first and include the reconciliation
+assertion — it is what catches the error your own expectations share.
+
+Build `packages/shared` before typechecking; the apps import its `dist` output.
