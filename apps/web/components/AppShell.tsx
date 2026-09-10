@@ -47,12 +47,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col">
       <header className="sticky top-0 z-20 border-b border-pitch-600 bg-pitch-900/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
-          <Link href="/lobby" className="font-display text-lg font-black tracking-tight">
+          <Link href="/lobby" className="flex min-h-[44px] items-center font-display text-lg font-black tracking-tight">
             GOAL<span className="text-volt">27</span>
           </Link>
 
           <div className="flex items-center gap-3">
-            <Link href="/profile" className="relative text-xl" aria-label="Notifications">
+            <Link href="/profile" className="tap relative text-xl" aria-label="Notifications">
               🔔
               {unread > 0 ? (
                 <span className="absolute -right-1 -top-1 rounded-full bg-volt px-1.5 text-[10px] font-black text-pitch-900">
@@ -60,7 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </span>
               ) : null}
             </Link>
-            <Link href="/wallet" className="text-right leading-tight">
+            <Link href="/wallet" className="flex min-h-[44px] flex-col justify-center text-right leading-tight">
               <div className="font-display text-xl font-black tabular-nums text-volt">
                 {formatCents(wallet?.availableCents ?? 0)}
               </div>
@@ -106,9 +106,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       ) : null}
 
-      <main className="flex-1 px-4 pb-28 pt-4">{children}</main>
+      {/* The bottom padding clears the fixed nav AND the home indicator, since
+          the viewport is set to cover the full screen. */}
+      <main
+        className="flex-1 px-4 pt-4"
+        style={{ paddingBottom: 'calc(7rem + env(safe-area-inset-bottom))' }}
+      >
+        {children}
+      </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl border-t border-pitch-600 bg-pitch-900/95 backdrop-blur">
+      <nav
+        className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl border-t border-pitch-600 bg-pitch-900/95 backdrop-blur"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
         <div className="grid grid-cols-5">
           {NAV.map((item) => {
             const active = pathname.startsWith(item.href);
@@ -116,9 +126,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex flex-col items-center gap-0.5 py-3 text-[11px] font-semibold ${
-                  active ? 'text-volt' : 'text-slate-500'
-                }`}
+                className={`flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2
+                  text-[11px] font-semibold ${active ? 'text-volt' : 'text-slate-500'}`}
               >
                 <span className="text-lg" aria-hidden>
                   {item.glyph}

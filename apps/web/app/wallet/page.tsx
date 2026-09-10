@@ -161,7 +161,7 @@ export default function WalletPage() {
             <button
               key={cents}
               onClick={() => setAmount(cents)}
-              className={`rounded-xl border py-2 font-display text-sm font-black tabular-nums ${
+              className={`min-h-[44px] rounded-xl border py-2 font-display text-sm font-black tabular-nums ${
                 amount === cents ? 'border-volt bg-volt/10 text-volt' : 'border-pitch-500 text-slate-300'
               }`}
             >

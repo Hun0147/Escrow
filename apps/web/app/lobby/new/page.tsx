@@ -242,7 +242,7 @@ function Toggle({
     <button
       type="button"
       onClick={() => onChange(!value)}
-      className="flex w-full items-center justify-between gap-3 text-left"
+      className="flex min-h-[48px] w-full items-center justify-between gap-3 py-1 text-left"
     >
       <span>
         <span className="block text-sm font-semibold">{label}</span>

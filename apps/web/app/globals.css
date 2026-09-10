@@ -29,8 +29,8 @@ body {
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold
-           transition disabled:cursor-not-allowed disabled:opacity-40;
+    @apply inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl px-4 py-3
+           text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40;
   }
 
   .btn-primary {
@@ -46,20 +46,31 @@ body {
   }
 
   .field {
-    @apply w-full rounded-xl border border-pitch-500 bg-pitch-900/80 px-3 py-3 text-base
-           text-slate-100 outline-none placeholder:text-slate-500 focus:border-volt/70;
+    /* text-base, not smaller: iOS Safari zooms the viewport on focus for any
+       input under 16px, which throws the layout on every form. */
+    @apply min-h-[44px] w-full rounded-xl border border-pitch-500 bg-pitch-900/80 px-3 py-3
+           text-base text-slate-100 outline-none placeholder:text-slate-500 focus:border-volt/70;
   }
 
   .label {
     @apply mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400;
   }
 
+  /* 44px is Apple's minimum touch target and Android's is 48dp. Chips carry
+     real consequences here — stake filters, deposit limits, self-exclusion —
+     so they get a full-size hit area even though the label is small. */
   .chip {
-    @apply rounded-full border border-pitch-500 px-3 py-1 text-xs font-semibold text-slate-300;
+    @apply inline-flex min-h-[44px] items-center justify-center rounded-full border
+           border-pitch-500 px-4 text-xs font-semibold text-slate-300;
   }
 
   .chip-active {
     @apply border-volt/70 bg-volt/10 text-volt;
+  }
+
+  /* A 44px hit area for something whose visible glyph is smaller. */
+  .tap {
+    @apply inline-flex min-h-[44px] min-w-[44px] items-center justify-center;
   }
 
   /* Stakes are the point of the product: they are always the largest,

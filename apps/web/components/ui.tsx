@@ -59,7 +59,10 @@ export function SectionTitle({ children, href }: { children: React.ReactNode; hr
         {children}
       </h2>
       {href ? (
-        <Link href={href} className="text-xs font-semibold text-volt hover:underline">
+        <Link
+          href={href}
+          className="-my-2 flex min-h-[44px] items-center px-2 text-xs font-semibold text-volt hover:underline"
+        >
           See all
         </Link>
       ) : null}

@@ -546,11 +546,19 @@ function ScoreInput({
     <div>
       <p className="label">{label}</p>
       <div className="flex items-center gap-2">
-        <button className="btn-ghost px-3 py-2" onClick={() => onChange(Math.max(0, value - 1))}>
+        <button
+          className="btn-ghost min-h-[52px] min-w-[52px] px-3 text-lg"
+          aria-label="One fewer"
+          onClick={() => onChange(Math.max(0, value - 1))}
+        >
           −
         </button>
         <span className="flex-1 text-center font-display text-3xl font-black tabular-nums">{value}</span>
-        <button className="btn-ghost px-3 py-2" onClick={() => onChange(Math.min(99, value + 1))}>
+        <button
+          className="btn-ghost min-h-[52px] min-w-[52px] px-3 text-lg"
+          aria-label="One more"
+          onClick={() => onChange(Math.min(99, value + 1))}
+        >
           +
         </button>
       </div>
