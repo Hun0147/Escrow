@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import type { Subscription } from '@escrow/shared';
+import { Suspense, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import type { DiscordLink, Subscription } from '@escrow/shared';
 import { ApiError, api } from '../../lib/api';
 import { formatCents } from '../../lib/format';
 import { useRequireSession } from '../../components/SessionProvider';
@@ -24,17 +25,53 @@ interface SubscriptionState {
   periodDays: number;
 }
 
+interface DiscordState {
+  configured: boolean;
+  authorizeUrl: string | null;
+  link: DiscordLink | null;
+}
+
 export default function SettingsPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell>
+          <Spinner />
+        </AppShell>
+      }
+    >
+      <Settings />
+    </Suspense>
+  );
+}
+
+function Settings() {
   const { user, loading, refresh } = useRequireSession();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [pro, setPro] = useState<SubscriptionState | null>(null);
+  const [discord, setDiscord] = useState<DiscordState | null>(null);
+  const justLinked = useSearchParams().get('discord') === 'linked';
 
   useEffect(() => {
     if (!user) return;
     void api<SubscriptionState>('/subscription').then(setPro);
+    void api<DiscordState>('/me/discord').then(setDiscord);
   }, [user?.id]);
+
+  async function changeDiscord(call: Promise<unknown>, message: string) {
+    setError(null);
+    setNotice(null);
+    try {
+      await call;
+      setNotice(message);
+      setDiscord(await api<DiscordState>('/me/discord'));
+      await refresh();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not update Discord');
+    }
+  }
 
   async function changeSubscription(method: 'POST' | 'DELETE', message: string) {
     setError(null);
@@ -76,6 +113,9 @@ export default function SettingsPage() {
 
       {error ? <div className="mb-3"><Banner tone="danger">{error}</Banner></div> : null}
       {notice ? <div className="mb-3"><Banner tone="good">{notice}</Banner></div> : null}
+      {justLinked && !notice ? (
+        <div className="mb-3"><Banner tone="good">Discord connected — DMs are on.</Banner></div>
+      ) : null}
 
       <section className="card mb-3 border-volt/30">
         <div className="flex items-baseline justify-between">
@@ -123,6 +163,61 @@ export default function SettingsPage() {
           Charged from your wallet balance. It renews automatically, and lapses rather than
           overdrawing you if the balance is short.
         </p>
+      </section>
+
+      <section className="card mb-3">
+        <div className="flex items-baseline justify-between">
+          <p className="label mb-0">Discord</p>
+          {discord?.link ? (
+            <span className="text-sm font-semibold text-volt">@{discord.link.username}</span>
+          ) : null}
+        </div>
+        <p className="mt-2 text-sm text-slate-400">
+          Get a DM when someone joins your match, when a result is reported and the clock starts on
+          yours, and when escrow pays out. Notifications only — Goal 27 never takes an instruction
+          or moves money over Discord.
+        </p>
+
+        {!discord ? (
+          <p className="mt-3 text-sm text-slate-500">Loading…</p>
+        ) : !discord.configured ? (
+          <p className="mt-3 text-sm text-slate-500">
+            Discord DMs are not switched on for this deployment.
+          </p>
+        ) : discord.link ? (
+          <>
+            <label className="mt-3 flex items-center justify-between gap-3 text-sm text-slate-300">
+              <span>Direct messages</span>
+              <button
+                className={discord.link.dmEnabled ? 'chip border-volt text-volt' : 'chip'}
+                onClick={() =>
+                  changeDiscord(
+                    api('/me/discord/dms', { body: { enabled: !discord.link!.dmEnabled } }),
+                    discord.link!.dmEnabled ? 'Discord DMs are off.' : 'Discord DMs are on.',
+                  )
+                }
+              >
+                {discord.link.dmEnabled ? 'On' : 'Off'}
+              </button>
+            </label>
+            <button
+              className="btn-ghost mt-3 w-full"
+              onClick={() =>
+                changeDiscord(api('/me/discord', { method: 'DELETE' }), 'Discord disconnected.')
+              }
+            >
+              Disconnect Discord
+            </button>
+            <p className="mt-2 text-[11px] text-slate-500">
+              Turning DMs off keeps the link, so you do not have to authorise again to turn them
+              back on.
+            </p>
+          </>
+        ) : (
+          <a className="btn-primary mt-3 block w-full text-center" href={discord.authorizeUrl ?? '#'}>
+            Connect Discord
+          </a>
+        )}
       </section>
 
       <section className="card mb-3">

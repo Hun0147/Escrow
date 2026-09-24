@@ -454,8 +454,44 @@ function mapNotification(row: any): Notification {
     body: row.body,
     matchId: row.match_id,
     readAt: row.read_at ? row.read_at.toISOString() : null,
+    discordDeliveredAt: row.discord_delivered_at
+      ? row.discord_delivered_at.toISOString()
+      : null,
     createdAt: row.created_at.toISOString(),
   };
+}
+
+/**
+ * Claims a notification for Discord delivery.
+ *
+ * Returns false if it was already delivered. The whole idempotency of the DM
+ * path rests here: only the caller that flips the column gets to send, so a
+ * relay that runs twice — or two API instances both subscribed to the bus —
+ * still produces one message.
+ */
+export async function claimForDiscordDelivery(
+  notificationId: string,
+  db: Queryable = pool,
+): Promise<boolean> {
+  const { rows } = await db.query(
+    `UPDATE notifications SET discord_delivered_at = now()
+     WHERE id = $1 AND discord_delivered_at IS NULL
+     RETURNING id`,
+    [notificationId],
+  );
+  return rows.length > 0;
+}
+
+/** Releases a claim when the send failed, so a retry can pick it up. */
+export async function releaseDiscordDelivery(
+  notificationId: string,
+  error: string,
+  db: Queryable = pool,
+): Promise<void> {
+  await db.query(
+    `UPDATE notifications SET discord_delivered_at = NULL, discord_error = $2 WHERE id = $1`,
+    [notificationId, error.slice(0, 500)],
+  );
 }
 
 export async function insertNotification(

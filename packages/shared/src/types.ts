@@ -137,6 +137,13 @@ export interface PublicUser {
   createdAt: string;
 }
 
+export interface DiscordLink {
+  discordId: string;
+  username: string;
+  dmEnabled: boolean;
+  linkedAt: string;
+}
+
 export interface SelfUser extends PublicUser {
   email: string;
   phone: string | null;
@@ -149,6 +156,7 @@ export interface SelfUser extends PublicUser {
   selfExcludedUntil: string | null;
   strikes: number;
   bannedAt: string | null;
+  discord: DiscordLink | null;
 }
 
 export interface Wallet {
@@ -286,6 +294,8 @@ export interface Notification {
   body: string;
   matchId: string | null;
   readAt: string | null;
+  /** When this was delivered as a Discord DM, if it was. */
+  discordDeliveredAt: string | null;
   createdAt: string;
 }
 

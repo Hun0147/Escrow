@@ -1,19 +1,22 @@
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { pool } from '../src/db/pool';
 import { invalidateSettingsCache } from '../src/common/settings';
 import { setMatchmakingQueue } from '../src/queue/matchmaking';
 import { setEvidenceStore } from '../src/storage';
 import { setOcrEngine } from '../src/ocr/engine';
 import { setPaymentProvider } from '../src/payments';
+import { setDiscordClient } from '../src/discord/client';
+import { stopDiscordRelay } from '../src/discord/relay';
 
-// Configuration is seeded by a migration; tests are allowed to change it, so
-// it is wiped and re-seeded rather than left to leak between cases.
-const SEED_SQL = readFileSync(
-  join(__dirname, '../src/db/migrations/002_seed_settings.sql'),
-  'utf8',
-);
-
+// Configuration is seeded by the migrations; tests are allowed to change it,
+// so it is wiped and restored rather than left to leak between cases. The
+// fixture is the copy `test/global-setup.ts` takes once the migrations have
+// run — reading one migration file instead would quietly miss every setting a
+// later migration adds.
+const CONFIG_RESTORE = [
+  'TRUNCATE TABLE platform_settings, blocked_regions',
+  'INSERT INTO platform_settings SELECT * FROM test_seed_platform_settings',
+  'INSERT INTO blocked_regions SELECT * FROM test_seed_blocked_regions',
+].join('; ');
 
 const TABLES = [
   'payment_events',
@@ -46,13 +49,14 @@ beforeEach(async () => {
   // exactly the distinction we want: no application path can rewrite history,
   // but a test fixture can start from an empty book.
   await pool.query(`TRUNCATE TABLE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
-  await pool.query('TRUNCATE TABLE platform_settings, blocked_regions');
-  await pool.query(SEED_SQL);
+  await pool.query(CONFIG_RESTORE);
   invalidateSettingsCache();
   setMatchmakingQueue(null);
   setEvidenceStore(null);
   setOcrEngine(null);
   setPaymentProvider(null);
+  stopDiscordRelay();
+  setDiscordClient(null);
 });
 
 afterAll(async () => {

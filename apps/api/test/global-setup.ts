@@ -16,9 +16,55 @@ export default async function globalSetup(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error('DATABASE_URL is not set');
 
+  const databaseName = decodeURIComponent(new URL(url).pathname.replace(/^\//, ''));
+  // The suite truncates every table between cases, so pointing it at anything
+  // but a throwaway database destroys data. Refuse rather than discover it.
+  if (!/test/i.test(databaseName)) {
+    throw new Error(
+      `Refusing to run the suite against "${databaseName}": it truncates every table.\n` +
+        `  Point TEST_DATABASE_URL at a database whose name contains "test".`,
+    );
+  }
+
   await ensureDatabaseExists(url);
+  await resetSchema();
   await runMigrations(() => undefined);
+  await snapshotSeededConfig();
   await pool.end();
+}
+
+/**
+ * Rebuilds the schema from the migrations on every run.
+ *
+ * Applying only the new migrations would be faster, but the suite is allowed
+ * to change configuration rows, so a database carried over from a previous run
+ * holds whatever the last test left behind — and a migration's seed insert is
+ * ON CONFLICT DO NOTHING, so it never corrects it. Starting from nothing makes
+ * the fixture below exactly what the migrations produce.
+ */
+async function resetSchema(): Promise<void> {
+  await pool.query('DROP SCHEMA public CASCADE');
+  await pool.query('CREATE SCHEMA public');
+}
+
+/**
+ * Configuration lives in tables (`platform_settings`, `blocked_regions`) that
+ * the migrations seed and tests are allowed to change. Rather than re-reading
+ * one migration file — which silently misses every setting a later migration
+ * adds — the freshly migrated state is copied here, and `test/setup.ts`
+ * restores each test from that copy.
+ */
+const CONFIG_TABLES = ['platform_settings', 'blocked_regions'] as const;
+
+async function snapshotSeededConfig(): Promise<void> {
+  for (const table of CONFIG_TABLES) {
+    await pool.query(`DROP TABLE IF EXISTS ${snapshotOf(table)}`);
+    await pool.query(`CREATE TABLE ${snapshotOf(table)} AS TABLE ${table}`);
+  }
+}
+
+function snapshotOf(table: string): string {
+  return `test_seed_${table}`;
 }
 
 async function ensureDatabaseExists(url: string): Promise<void> {

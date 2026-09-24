@@ -164,7 +164,7 @@ describe('HTTP surface', () => {
     const response = await request(app)
       .post('/admin/settings')
       .set('Authorization', bearer(moderator.id))
-      .send({ key: 'rake_bps', value: 0 });
+      .send({ key: 'escrow_fee_bps', value: 0 });
     expect(response.status).toBe(403);
   });
 
@@ -173,7 +173,7 @@ describe('HTTP surface', () => {
     const response = await request(app).get('/admin/dashboard').set('Authorization', bearer(admin.id));
     expect(response.status).toBe(200);
     expect(response.body.reconciliationBreaks).toEqual([]);
-    expect(response.body.settings.rake_bps).toBe(1000);
+    expect(response.body.settings.escrow_fee_bps).toBe(1000);
     expect(response.body).toHaveProperty('escrowHeldCents');
   });
 

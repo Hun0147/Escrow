@@ -7,6 +7,7 @@ import { badRequest, notFound } from '../../common/errors';
 import { findUserById, toPublicUser, toSelfUser } from '../../db/repos/users.repo';
 import { getWallet } from '../../db/repos/ledger.repo';
 import * as profile from './profile.service';
+import * as discord from './discord.service';
 import * as trust from '../trust/trust.service';
 import * as notifications from '../notifications/notifications.service';
 
@@ -142,6 +143,53 @@ meRouter.post(
   handler(async (req, res) => {
     await notifications.markAllRead(req.userId!);
     res.json({ ok: true });
+  }),
+);
+
+// ------------------------------------------------------------------ discord
+
+const DEFAULT_REDIRECT = () =>
+  `${(process.env.WEB_ORIGIN ?? 'http://localhost:3000').replace(/\/$/, '')}/settings/discord`;
+
+meRouter.get(
+  '/discord',
+  handler(async (req, res) => {
+    res.json(discord.discordStatus(req.currentUser!, DEFAULT_REDIRECT()));
+  }),
+);
+
+const linkSchema = z.object({
+  code: z.string().min(8).max(512),
+  redirectUri: z.string().url().optional(),
+});
+
+meRouter.post(
+  '/discord',
+  handler(async (req, res) => {
+    const parsed = linkSchema.safeParse(req.body);
+    if (!parsed.success) throw badRequest('invalid_body', 'An authorisation code is required');
+    res.json({
+      user: await discord.linkDiscord(
+        req.currentUser!,
+        parsed.data.code,
+        parsed.data.redirectUri ?? DEFAULT_REDIRECT(),
+      ),
+    });
+  }),
+);
+
+meRouter.delete(
+  '/discord',
+  handler(async (req, res) => {
+    res.json({ user: await discord.unlinkDiscord(req.currentUser!) });
+  }),
+);
+
+meRouter.post(
+  '/discord/dms',
+  handler(async (req, res) => {
+    const enabled = req.body?.enabled !== false;
+    res.json({ user: await discord.setDiscordDms(req.currentUser!, enabled) });
   }),
 );
 

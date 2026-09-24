@@ -117,6 +117,21 @@ called both on every report *and* after each screenshot is analysed. The
 deadline sweep also escalates a stuck two-report match rather than skipping it.
 If you touch that path, keep both callers.
 
+## Discord DMs
+
+Outbound only, and opt-in. `discord/relay.ts` subscribes to the same internal
+bus as the socket gateway and DMs the notification types listed in the
+`discord_dm_types` setting. Three things to keep:
+
+- **The bot never reads.** No command handling, no message intake — invariant 4
+  covers it. A Discord message must never be able to stake, report, settle or
+  withdraw.
+- **Delivery is claimed, not assumed.** `claimForDiscordDelivery()` is a
+  conditional update; a failure releases the claim with the error so a retry
+  can still reach the player, rather than marking it delivered.
+- **A Discord outage is not a settlement outage.** The relay is fire-and-forget
+  off the bus; nothing in the money path waits on it or fails with it.
+
 ## Anti-fraud
 
 - **Shared device or payment instrument blocks a match; a shared IP does not.**
@@ -169,7 +184,7 @@ Demo accounts: `striker@` / `keeper@` / `admin@goal27.test`, password
 `goal27-demo-password`.
 
 ```bash
-npm test        # 169 tests, creates its own escrow_test database
+npm test        # 188 tests, creates its own escrow_test database
 npm run typecheck
 ```
 
@@ -187,6 +202,11 @@ same commands on every push.
   Run two and a player connected to instance A never receives events published
   on instance B — silent, and it looks like flaky sockets. Needs the Socket.io
   Redis adapter before scaling out.
+- **Test configuration comes from the migrations, not a file.** The suite
+  rebuilds the schema on every run and copies the seeded `platform_settings` /
+  `blocked_regions` as the per-test fixture. Re-reading one migration file
+  instead — which it used to do — silently drops every setting a later
+  migration adds, and quietly reinstates ones a later migration renamed.
 - **Screenshots are on local disk** (`LocalEvidenceStore`). Container
   filesystems are ephemeral; a redeploy destroys evidence a dispute depends on.
   The `EvidenceStore` interface is two methods and S3 drops straight in. This is

@@ -31,6 +31,7 @@ there is no path where one player's word moves the other player's money.
 | Admin dashboard, KYC review, fraud flags, settings | Built |
 | Real-time: lobby, chat, ready state, countdown, disconnects, wallet | Built (Socket.io) |
 | Pro subscription: lower escrow fee, priority matchmaking | Built |
+| Discord DM notifications (opt-in, outbound only) | Built; dormant until a bot token is configured |
 | Stripe integration | Built but **unverified against live Stripe** — no account was available. Signature verification and the capture flow are tested; the two REST calls are not. |
 | React Native mobile app | **Not built.** The web client is mobile-first and works as a phone web app; a native shell is a separate piece of work. |
 
@@ -77,6 +78,9 @@ Configuration, all optional:
 | `OCR_ENGINE` | `sidecar` | `tesseract` to use real OCR (optional dependency) |
 | `STRIPE_SECRET_KEY` | unset | Setting this **and** the webhook secret switches payments from mock to Stripe |
 | `STRIPE_WEBHOOK_SECRET` | unset | Verifies webhook signatures; required alongside the secret key |
+| `DISCORD_BOT_TOKEN` | unset | Discord DMs. All three Discord variables must be set before anything is sent |
+| `DISCORD_CLIENT_ID` | unset | OAuth application id — also builds the authorise URL the settings page links to |
+| `DISCORD_CLIENT_SECRET` | unset | Used once, server-side, to exchange the authorisation code |
 | `WORKERS` | on | `off` to run the API without background jobs |
 | `WEB_ORIGIN` | `*` | CORS origin for the web client |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:4000` | API base URL for the web client |
@@ -101,7 +105,7 @@ docker run -d -p 5432:5432 \
 npm test
 ```
 
-169 tests across 12 suites, run against a real PostgreSQL rather than a stub —
+188 tests across 13 suites, run against a real PostgreSQL rather than a stub —
 the money paths are only meaningful if the transactions, row locks and
 constraints are real. Tables are truncated between cases and the seeded
 configuration is restored, so no test can leak a changed fee rate or a blocked
@@ -325,6 +329,30 @@ countdowns, opponent-disconnect detection, wallet balance and notifications —
 
 ---
 
+## Discord
+
+Opt-in DM notifications, and deliberately nothing more. A player authorises
+Goal 27 on Discord (`identify` scope only), the API exchanges the code
+server-side, and from then on the notifications worth interrupting someone for
+— an opponent joined, a result was reported and your reporting clock is
+running, escrow paid out, a dispute moved — arrive as a direct message with a
+link back into the app.
+
+The rule from the ledger applies here too: **the bot only ever sends.** It
+reads no messages and accepts no commands, so there is no path by which a
+Discord message stakes, reports, settles or withdraws anything. The relay is a
+subscriber on the same internal bus the Socket.io gateway uses, so a Discord
+outage loses notifications and touches nothing else; delivery is claimed with a
+conditional update, so a notification is DM'd once even if the relay retries.
+
+Which notification types are DM-worthy is a platform setting
+(`discord_dm_types`), not a constant — wallet movements are deliberately not in
+it, because a message per deposit trains people to ignore the channel. Without
+`DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` the relay
+never starts and the settings page says so.
+
+---
+
 ## API
 
 `/auth/*`, `/config` and `/health` are open. Everything else needs
@@ -339,6 +367,8 @@ token, never from the request body.
 | POST | `/me/kyc` | Submit identity documents for review |
 | POST | `/me/responsible-play`, `/me/cool-off`, `/me/self-exclude` | Player-set limits |
 | GET | `/me/trust`, `/me/notifications` | Trust event log, inbox |
+| GET/POST/DELETE | `/me/discord` | Discord link status, OAuth link, unlink |
+| POST | `/me/discord/dms` | Turn DMs on or off without unlinking |
 | GET/POST | `/wallet`, `/wallet/deposit`, `/wallet/withdraw`, `/wallet/history` | Money |
 | GET/POST/DELETE | `/subscription` | Goal 27 Pro: status, subscribe, cancel at period end |
 | POST | `/webhooks/payments` | Provider callbacks — signature-authenticated, no session |

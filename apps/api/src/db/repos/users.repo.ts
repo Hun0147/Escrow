@@ -30,6 +30,14 @@ export function mapUser(row: any): UserRow {
     draws: row.draws,
     strikes: row.strikes,
     bannedAt: row.banned_at ? row.banned_at.toISOString() : null,
+    discord: row.discord_id
+      ? {
+          discordId: row.discord_id,
+          username: row.discord_username ?? '',
+          dmEnabled: row.discord_dm_enabled,
+          linkedAt: row.discord_linked_at ? row.discord_linked_at.toISOString() : '',
+        }
+      : null,
     selfExcludedUntil: row.self_excluded_until ? row.self_excluded_until.toISOString() : null,
     createdAt: row.created_at.toISOString(),
   };
@@ -109,6 +117,14 @@ export async function findUserByHandle(handle: string, db: Queryable = pool): Pr
   return rows[0] ? mapUser(rows[0]) : null;
 }
 
+export async function findUserByDiscordId(
+  discordId: string,
+  db: Queryable = pool,
+): Promise<UserRow | null> {
+  const { rows } = await db.query('SELECT * FROM users WHERE discord_id = $1', [discordId]);
+  return rows[0] ? mapUser(rows[0]) : null;
+}
+
 export async function findUserByPsnId(psnId: string, db: Queryable = pool): Promise<UserRow | null> {
   const { rows } = await db.query('SELECT * FROM users WHERE lower(psn_id) = lower($1)', [psnId]);
   return rows[0] ? mapUser(rows[0]) : null;
@@ -135,6 +151,10 @@ const UPDATABLE: Record<string, string> = {
   selfExcludedUntil: 'self_excluded_until',
   coolOffUntil: 'cool_off_until',
   lastIp: 'last_ip',
+  discordId: 'discord_id',
+  discordUsername: 'discord_username',
+  discordDmEnabled: 'discord_dm_enabled',
+  discordLinkedAt: 'discord_linked_at',
 };
 
 export interface UserPatch {
@@ -158,6 +178,10 @@ export interface UserPatch {
   selfExcludedUntil?: string | null;
   coolOffUntil?: string | null;
   lastIp?: string | null;
+  discordId?: string | null;
+  discordUsername?: string | null;
+  discordDmEnabled?: boolean;
+  discordLinkedAt?: string | null;
 }
 
 /** Builds a partial UPDATE from whichever keys are actually present. */
