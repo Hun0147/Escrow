@@ -414,6 +414,17 @@ order, each in its own transaction, tracked in `schema_migrations`.
 
 ---
 
+## Deploying
+
+The web client goes to Vercel; the API does not — it holds Socket.io
+connections and runs workers on a clock, which a serverless function cannot.
+`apps/api/Dockerfile` runs on any container host, `render.yaml` is a one-click
+blueprint for one of them, and `vercel.json` builds the client with its shared
+package. Full walkthrough, including which parts are still stand-ins, in
+[DEPLOY.md](DEPLOY.md).
+
+---
+
 ## Before going live
 
 This is a working MVP, not a launch-ready product. The gaps that matter:
