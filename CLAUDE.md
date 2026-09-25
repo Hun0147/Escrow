@@ -207,6 +207,12 @@ same commands on every push.
   `blocked_regions` as the per-test fixture. Re-reading one migration file
   instead — which it used to do — silently drops every setting a later
   migration adds, and quietly reinstates ones a later migration renamed.
+- **The service worker must never cache money.** `apps/web/public/sw.js`
+  passes through every non-GET request and everything cross-origin, which is
+  what keeps a cached balance or a replayed stake impossible. It caches the
+  build's hashed assets and one static offline page — nothing else. It is also
+  not registered in development, so a stale cache is never what you are
+  debugging.
 - **Screenshots are on local disk** (`LocalEvidenceStore`). Container
   filesystems are ephemeral; a redeploy destroys evidence a dispute depends on.
   The `EvidenceStore` interface is two methods and S3 drops straight in. This is

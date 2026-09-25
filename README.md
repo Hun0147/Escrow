@@ -32,8 +32,9 @@ there is no path where one player's word moves the other player's money.
 | Real-time: lobby, chat, ready state, countdown, disconnects, wallet | Built (Socket.io) |
 | Pro subscription: lower escrow fee, priority matchmaking | Built |
 | Discord DM notifications (opt-in, outbound only) | Built; dormant until a bot token is configured |
+| Installable web app: manifest, icons, offline page, service worker | Built |
 | Stripe integration | Built but **unverified against live Stripe** — no account was available. Signature verification and the capture flow are tested; the two REST calls are not. |
-| React Native mobile app | **Not built.** The web client is mobile-first and works as a phone web app; a native shell is a separate piece of work. |
+| React Native mobile app | **Not built.** The web client installs to the home screen and runs full-screen as a web app; a native shell is a separate piece of work. |
 
 ---
 
@@ -326,6 +327,38 @@ means a websocket outage degrades the product (no live updates) instead of
 breaking settlement. Sockets carry lobby updates, match chat, ready state,
 countdowns, opponent-disconnect detection, wallet balance and notifications —
 **nothing that moves money goes over a socket.**
+
+---
+
+## The installed web app
+
+The client is a PWA, so a player can add Goal 27 to their home screen and get
+a full-screen app with no browser chrome. That is not decoration: the brief's
+hard requirement is that the balance and the state of a live match are visible
+without scrolling, and the URL bar was eating exactly that strip.
+
+What is installed: `app/manifest.ts` (standalone, portrait, opening straight
+into the lobby, with maskable icons), Apple's standalone meta tags — iOS
+ignores the manifest's display mode — and `public/sw.js`.
+
+The service worker is deliberately small, and what it **refuses** to do is the
+point:
+
+- **No non-GET request is ever intercepted.** Staking, reporting, settling and
+  withdrawing are POSTs; a service worker that replayed one could stake twice.
+- **Nothing cross-origin is touched.** The API is on its own host, so no
+  balance, lobby or scoreline is ever served from a cache. A stale balance is
+  a lie with somebody's stake behind it.
+- **Only the build's hashed assets and a static offline page are stored.**
+  Pages are always fetched live; with no connection the player gets a page
+  that says so, and tells them what is true while they are disconnected —
+  escrow is untouched, a reporting deadline keeps running, and nothing they
+  tapped was queued to send later.
+
+Installability needs a production build over HTTPS (or localhost): `npm run
+build --workspace=apps/web && npm start --workspace=apps/web`. In development
+the worker is not registered at all, so a stale cache can never be what you
+are debugging.
 
 ---
 

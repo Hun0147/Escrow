@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Goal 27">
+  <defs>
+    <linearGradient id="turf" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0a0e14"/>
+      <stop offset="1" stop-color="#05070a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#turf)"/>
+  <!-- The pitch, floodlit: halfway line and centre circle, kept faint so the
+       numerals carry the mark at small sizes. -->
+  <g stroke="#26303f" stroke-width="10" fill="none">
+    <circle cx="256" cy="256" r="150"/>
+    <!-- The halfway line stops at the centre circle rather than running
+         through the numerals, which turns to mush below 48px. -->
+    <path d="M42 256 H106"/>
+    <path d="M406 256 H470"/>
+  </g>
+  <g fill="#3dff9a" font-family="Arial Black, Helvetica, sans-serif" font-weight="900"
+     text-anchor="middle" letter-spacing="-8">
+    <text x="256" y="322" font-size="210">27</text>
+  </g>
+</svg>

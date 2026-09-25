@@ -57,6 +57,21 @@ you get a site that renders perfectly and cannot log in.
 
 ---
 
+## The installed app
+
+Nothing extra to configure: the manifest and service worker ship with the
+client. Once it is on HTTPS — which Vercel gives you — a player can add Goal
+27 to their home screen and it opens full-screen with no browser chrome.
+
+Two things to know. The worker is only registered in a production build, so
+`npm run dev` never serves you a stale cache. And it caches the build's hashed
+assets and one offline page, nothing else: no API response and no non-GET
+request is ever touched, which is what makes a stale balance or a replayed
+stake impossible. When you deploy a new version, bump `VERSION` in
+`apps/web/public/sw.js` — old caches are dropped on activation by prefix.
+
+---
+
 ## What is real, and what is still a stand-in
 
 Everything about the money is real. The double-entry ledger, escrow, the
