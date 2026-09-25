@@ -1,0 +1,40 @@
+# One-click blueprint for the half of Goal 27 that Vercel cannot host.
+#
+# The web client goes to Vercel; this is the API — an Express + Socket.io
+# process with background workers — plus its database. Render is not special
+# here: the Dockerfile runs the same on Railway, Fly.io or any container host.
+services:
+  - type: web
+    name: goal27-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    # The realtime bus is an in-process EventEmitter. Two instances means a
+    # player connected to one never sees events published on the other, which
+    # looks exactly like flaky sockets. One instance until it uses the
+    # Socket.io Redis adapter.
+    numInstances: 1
+    disk:
+      # Screenshots are evidence a dispute depends on. A plain container
+      # filesystem loses them on every redeploy; this is the stopgap until the
+      # EvidenceStore points at S3.
+      name: evidence
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: goal27-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEB_ORIGIN
+        sync: false # the Vercel URL, e.g. https://goal27.vercel.app
+      - key: PORT
+        value: 4000
+
+databases:
+  - name: goal27-db
+    databaseName: goal27
+    user: goal27
