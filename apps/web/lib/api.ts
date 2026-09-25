@@ -60,14 +60,38 @@ export async function api<T = unknown>(
   const token = getToken();
   if (token && options.auth !== false) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API_URL}${path}`, {
-    method: options.method ?? (options.body ? 'POST' : 'GET'),
-    headers,
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: options.method ?? (options.body ? 'POST' : 'GET'),
+      headers,
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch {
+    // Not an HTTP error — the request never arrived. On a fresh deployment
+    // that is almost always NEXT_PUBLIC_API_URL, which is baked in at build
+    // time: wrong value, and you get a site that renders perfectly and cannot
+    // log in. Name the address rather than saying "request failed".
+    throw new ApiError(
+      0,
+      'api_unreachable',
+      `Can't reach the Goal 27 API at ${API_URL}. Check your connection — or, if this is a new deployment, that NEXT_PUBLIC_API_URL points at a running API that allows this origin.`,
+    );
+  }
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  let payload: { error?: { code?: string; message?: string; details?: unknown } } & Record<string, unknown>;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    // Something answered, but not the API: a proxy error page, a redirect to
+    // a login wall, a misrouted domain.
+    throw new ApiError(
+      response.status,
+      'api_unexpected_response',
+      `The address at ${API_URL} answered, but not with Goal 27's API.`,
+    );
+  }
 
   if (!response.ok) {
     if (response.status === 401 && typeof window !== 'undefined') {
