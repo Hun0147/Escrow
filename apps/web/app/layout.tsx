@@ -1,6 +1,6 @@
 import './globals.css';
 import { SessionProvider } from '../components/SessionProvider';
-import { InstallApp } from '../components/InstallApp';
+import { ServiceWorker } from '../components/InstallApp';
 
 export const metadata = {
   title: 'Goal 27 — PS5 money matches',
@@ -39,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <SessionProvider>{children}</SessionProvider>
-        <InstallApp />
+        <ServiceWorker />
       </body>
     </html>
   );

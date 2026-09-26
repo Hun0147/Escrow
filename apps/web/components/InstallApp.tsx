@@ -10,8 +10,25 @@ interface InstallPromptEvent extends Event {
 const DISMISSED_KEY = 'goal27.install-dismissed';
 
 /**
- * Registers the service worker, and offers the install when the browser says
- * one is available.
+ * Registers the service worker. Mounted at the root, so an installed app
+ * still has its offline page even if the player never signs in.
+ */
+export function ServiceWorker() {
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || process.env.NODE_ENV !== 'production') return;
+    // Registration failing is not worth interrupting anyone for — the app
+    // works without it, it just loses the offline page.
+    void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+  }, []);
+  return null;
+}
+
+/**
+ * Offers the install when the browser says one is available.
+ *
+ * It sits in the page rather than floating over it. A bar pinned to the
+ * bottom of a money app covers either the nav or the button someone is
+ * reaching for — which is how this was first built, and how it was caught.
  *
  * Installed, Goal 27 opens full-screen from the home screen — which matters
  * more here than on most sites, because browser chrome eats exactly the strip
@@ -26,12 +43,6 @@ export function InstallApp() {
   const [iosHint, setIosHint] = useState(false);
 
   useEffect(() => {
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-      // Registration failing is not worth interrupting anyone for — the app
-      // works without it, it just loses the offline page.
-      void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
-    }
-
     const alreadyInstalled =
       window.matchMedia('(display-mode: standalone)').matches ||
       (window.navigator as { standalone?: boolean }).standalone === true;
@@ -70,12 +81,7 @@ export function InstallApp() {
   if (!prompt && !iosHint) return null;
 
   return (
-    <div
-      className="fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-2xl border-t border-volt/30 bg-pitch-800/98 px-4 pt-3 backdrop-blur"
-      style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
-      role="dialog"
-      aria-label="Install Goal 27"
-    >
+    <section className="card mb-3 border-volt/30" aria-label="Install Goal 27">
       <div className="flex items-start gap-3">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon-192.png" alt="" width={44} height={44} className="rounded-xl" />
@@ -106,6 +112,6 @@ export function InstallApp() {
           Install
         </button>
       ) : null}
-    </div>
+    </section>
   );
 }

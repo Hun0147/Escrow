@@ -8,6 +8,7 @@ import { ApiError, api } from '../../lib/api';
 import { formatCents, modeLabel, MATCH_STATUS_LABELS, MATCH_STATUS_TONE, relativeTime } from '../../lib/format';
 import { useRequireSession } from '../../components/SessionProvider';
 import { AppShell } from '../../components/AppShell';
+import { InstallApp } from '../../components/InstallApp';
 import { Banner, Empty, SectionTitle, Spinner, StakePill, TrustBadge } from '../../components/ui';
 
 interface LobbyEntry {
@@ -99,6 +100,8 @@ export default function LobbyPage() {
           </Banner>
         </div>
       ) : null}
+
+      <InstallApp />
 
       {mine.length > 0 ? (
         <section className="mb-6">
