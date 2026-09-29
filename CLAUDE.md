@@ -80,6 +80,12 @@ way. The Pro discount is read from the **live subscription period**, not the
 cached `users.subscription_tier` flag, so a lapsed subscription stops earning it
 immediately rather than at the next renewal sweep.
 
+**`holdSeconds` is declared and never enforced.** `settlementPolicyFor()`
+returns a 60-second hold at standard trust and 300 at low, described as a fraud
+review window, and no code path reads it — auto-settlement pays out
+immediately. Either wire it into `resolveBothReports` or drop it from the
+policy; a promise the code does not keep is worse than neither.
+
 **Known tension:** charging on both settlement and withdrawal takes roughly 19%
 of a pool across a full deposit-play-withdraw cycle. That was a deliberate
 product decision, not an oversight. Splitting the rate in two (settlement vs
@@ -106,6 +112,27 @@ score can only come from the players themselves.
 - **A silent opponent escalates, it does not forfeit.** The reporting deadline
   sends the match to the moderation queue with the one report, the screenshots
   and the chat log — it never hands the reporter an automatic win.
+
+### Two more bugs worth not reintroducing
+
+**A screenshot nobody has read yet is not evidence.** At mid trust the policy
+requires both players to upload one — but the requirement was satisfied by the
+*upload*, not by the verdict. The client sends the report and the image in one
+go, and the OCR queue drains every two seconds, so the pool paid out about 30ms
+after the second upload, and the duplicate verdict landed afterwards. Measured,
+not theorised. `resolveBothReports` now refuses to settle while any screenshot
+is still `pending`; the worker calls `finaliseIfPossible()` after each analysis,
+which is what that function is re-runnable for.
+
+**The opponent's capture of the same scoreboard is corroboration, not a
+duplicate.** The perceptual check was global, and two consoles photographing one
+full-time screen differ by a HUD overlay — Hamming distance 1 against a
+threshold of 6. So the same rule that *demanded* both players upload then
+accused the second one of recycling evidence and forced the match to a
+moderator. The check now skips the other player's screenshot within the same
+match, and nothing else: an image lifted from another match still collides with
+its original, and a player re-using their own upload still collides with
+themselves.
 
 ### A bug worth not reintroducing
 
@@ -184,7 +211,7 @@ Demo accounts: `striker@` / `keeper@` / `admin@goal27.test`, password
 `goal27-demo-password`.
 
 ```bash
-npm test        # 188 tests, creates its own escrow_test database
+npm test        # 192 tests, creates its own escrow_test database
 npm run typecheck
 ```
 

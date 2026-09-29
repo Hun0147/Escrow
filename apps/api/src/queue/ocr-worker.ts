@@ -61,6 +61,17 @@ export async function processScreenshot(screenshotId: string): Promise<OcrOutcom
 
     for (const other of await listHashedScreenshots(screenshot.id)) {
       if (!other.perceptualHash || other.perceptualHash.length !== perceptualHash.length) continue;
+      // The opponent's capture of the same scoreboard is corroboration, not
+      // recycled evidence. Two consoles photographing one full-time screen
+      // differ by a HUD overlay — a Hamming distance of about 1 — so without
+      // this the mid-trust rule that *requires* both players to upload would
+      // accuse the second one of fraud every time. Recycling is still caught:
+      // an image lifted from another match collides with its original, which
+      // is in that other match, and a player re-using their own upload
+      // collides with themselves.
+      if (other.matchId === screenshot.matchId && other.uploaderId !== screenshot.uploaderId) {
+        continue;
+      }
       if (hammingDistance(perceptualHash, other.perceptualHash) <= DUPLICATE_HAMMING_THRESHOLD) {
         await flagDuplicate(screenshot.id, other.id, screenshot.uploaderId, 'perceptually identical');
         await settleIfNowPossible(screenshot.matchId);

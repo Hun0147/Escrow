@@ -106,7 +106,7 @@ docker run -d -p 5432:5432 \
 npm test
 ```
 
-188 tests across 13 suites, run against a real PostgreSQL rather than a stub —
+192 tests across 13 suites, run against a real PostgreSQL rather than a stub —
 the money paths are only meaningful if the transactions, row locks and
 constraints are real. Tables are truncated between cases and the seeded
 configuration is restored, so no test can leak a changed fee rate or a blocked

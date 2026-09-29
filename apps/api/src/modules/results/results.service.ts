@@ -209,6 +209,21 @@ async function resolveBothReports(
         detail: 'Both players must upload a post-match screenshot before escrow releases.',
       };
     }
+
+    // A screenshot nobody has read yet is not evidence, it is a file. The OCR
+    // pass is queued, so at this trust level an upload and its report arriving
+    // together would otherwise settle the pool a second or two before anything
+    // checked the image — which is exactly the window a recycled or fabricated
+    // screenshot needs. Wait for the verdict; the worker calls back here after
+    // each analysis, which is what `finaliseIfPossible` is re-runnable for.
+    const unread = screenshots.filter((shot) => shot.verdict === 'pending');
+    if (unread.length > 0) {
+      return {
+        match,
+        status: 'held_for_review',
+        detail: 'Checking both screenshots against the reported score.',
+      };
+    }
   }
 
   // A screenshot the OCR pass has already rejected blocks auto-settlement

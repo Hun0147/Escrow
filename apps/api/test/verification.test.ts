@@ -433,6 +433,156 @@ describe('screenshot pipeline', () => {
     expect(await reconcileWallets()).toEqual([]);
   });
 
+  it('treats the opponent’s capture of the same scoreboard as corroboration', async () => {
+    // Both players photograph one full-time screen, so the two images are
+    // near-identical by design — the mid-trust rule demands both of them.
+    const { creator, opponent, match } = await playersAndMatch(60);
+    const theirs = scoreboardImage(96, 64, 7);
+    const mine = scoreboardImage(96, 64, 7);
+
+    const creatorShot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(theirs, FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: creatorShot.id,
+    });
+    await drainOcrQueue();
+
+    const opponentShot = await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      // One pixel of difference stands in for the HUD overlay that makes two
+      // consoles' captures distinct files but perceptually identical.
+      dataBase64: upload(Buffer.concat([mine, Buffer.from([0])]), FUT_SCREEN),
+    });
+    await submitResult(match.creatorId === opponent.id ? creator : opponent, {
+      matchId: match.id,
+      selfScore: 1,
+      opponentScore: 3,
+      screenshotId: opponentShot.id,
+    });
+    await drainOcrQueue();
+
+    expect((await findScreenshotById(opponentShot.id))!.verdict).toBe('match');
+    expect((await findMatchById(match.id))!.status).toBe('settled');
+    expect(await listOpenFraudFlags()).toEqual([]);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('still catches that same image re-used in another match', async () => {
+    const first = await playersAndMatch(60);
+    const image = scoreboardImage(96, 64, 8);
+    await uploadScreenshot(first.creator, {
+      matchId: first.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    // A different match, a different uploader — the exemption above must not
+    // reach across matches.
+    const second = await playersAndMatch(60);
+    const lifted = await uploadScreenshot(second.opponent, {
+      matchId: second.match.id,
+      contentType: 'image/png',
+      dataBase64: upload(Buffer.concat([image, Buffer.from([0])]), FUT_SCREEN),
+    });
+    await drainOcrQueue();
+
+    expect((await findScreenshotById(lifted.id))!.verdict).toBe('duplicate');
+    expect((await listOpenFraudFlags()).map((f) => f.kind)).toContain('duplicate_screenshot');
+  });
+
+  it('will not settle on a screenshot nobody has read yet', async () => {
+    // Trust 60 puts the pair in the band that requires both screenshots. The
+    // reports and the uploads arrive together, the way the client sends them,
+    // so the OCR queue has not run when the second report lands.
+    const { creator, opponent, match } = await playersAndMatch(60);
+    const image = scoreboardImage(96, 64, 4);
+
+    const creatorShot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: creatorShot.id,
+    });
+
+    // The opponent uploads a recycled copy of the same image — the thing the
+    // duplicate check exists to catch — and agrees with the score.
+    const opponentShot = await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(image, FUT_SCREEN),
+    });
+    const outcome = await submitResult(opponent, {
+      matchId: match.id,
+      selfScore: 1,
+      opponentScore: 3,
+      screenshotId: opponentShot.id,
+    });
+
+    // Both reports agree, both screenshots exist — and the pool stays put,
+    // because neither image has been looked at.
+    expect(outcome.status).toBe('held_for_review');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+    expect((await findScreenshotById(opponentShot.id))!.verdict).toBe('pending');
+
+    // Now the queue runs, the copy is caught, and a human rules instead.
+    await drainOcrQueue();
+    expect((await findScreenshotById(opponentShot.id))!.verdict).toBe('duplicate');
+    expect((await findMatchById(match.id))!.status).toBe('disputed');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('settles as soon as both screenshots come back clean', async () => {
+    const { creator, opponent, match } = await playersAndMatch(60);
+
+    const creatorShot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 5), FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: creatorShot.id,
+    });
+    const opponentShot = await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 6), FUT_SCREEN),
+    });
+    const held = await submitResult(opponent, {
+      matchId: match.id,
+      selfScore: 1,
+      opponentScore: 3,
+      screenshotId: opponentShot.id,
+    });
+    expect(held.status).toBe('held_for_review');
+
+    // The worker analysing the last screenshot is what releases the escrow —
+    // no second report, no sweep, no player action.
+    await drainOcrQueue();
+
+    const settled = (await findMatchById(match.id))!;
+    expect(settled.status).toBe('settled');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(0);
+    expect((await getWallet(creator.id))!.availableCents).toBe(4000 + 1800);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
   it('refuses a screenshot belonging to someone else’s match', async () => {
     const a = await playersAndMatch();
     const b = await playersAndMatch();
