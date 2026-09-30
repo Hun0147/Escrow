@@ -3,13 +3,24 @@
 # The web client goes to Vercel; this is the API — an Express + Socket.io
 # process with background workers — plus its database. Render is not special
 # here: the Dockerfile runs the same on Railway, Fly.io or any container host.
+#
+# The disk below needs a paid instance type. To try this on the free tier,
+# delete the `disk:` block and set `plan: free` on both the service and the
+# database — and know what you are giving up: uploaded screenshots then live
+# on an ephemeral filesystem, so a redeploy destroys the evidence a dispute
+# depends on, and a free database expires. Neither is acceptable once real
+# money is involved; both are fine for a look around.
 services:
   - type: web
     name: goal27-api
     runtime: docker
+    plan: starter
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /health
+    # This work lives on a branch. Without this, a blueprint happily builds
+    # the default branch, which has none of it.
+    branch: claude/goal-27-gaming-platform-z8vup4
     # The realtime bus is an in-process EventEmitter. Two instances means a
     # player connected to one never sees events published on the other, which
     # looks exactly like flaky sockets. One instance until it uses the
@@ -18,7 +29,8 @@ services:
     disk:
       # Screenshots are evidence a dispute depends on. A plain container
       # filesystem loses them on every redeploy; this is the stopgap until the
-      # EvidenceStore points at S3.
+      # EvidenceStore points at S3. The mount matches EVIDENCE_DIR in the
+      # Dockerfile.
       name: evidence
       mountPath: /data
       sizeGB: 5
@@ -27,10 +39,15 @@ services:
         fromDatabase:
           name: goal27-db
           property: connectionString
+      # The API refuses to start in production without this, because the
+      # development default is public. Render generates one.
       - key: JWT_SECRET
         generateValue: true
+      # The Vercel URL, once it exists — this is the CORS origin, so until it
+      # is right the browser blocks every call. Set it to anything now and
+      # correct it after the client deploys.
       - key: WEB_ORIGIN
-        sync: false # the Vercel URL, e.g. https://goal27.vercel.app
+        sync: false
       - key: PORT
         value: 4000
 
@@ -38,3 +55,4 @@ databases:
   - name: goal27-db
     databaseName: goal27
     user: goal27
+    plan: basic-256mb
