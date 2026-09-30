@@ -28,8 +28,18 @@ apps/api/dist/db/migrate.js && node apps/api/dist/server.js`, against a real
 PostgreSQL, from a tree containing only the files the runtime stage copies.
 It migrates, boots, serves `/health` and answers `/config`.
 
-Render reads `render.yaml` as a blueprint (service + database + disk). On
-Railway or Fly, point the host at `apps/api/Dockerfile` with the repository
+Render reads `render.yaml` as a blueprint (service + database + disk) at
+[dashboard.render.com/blueprints](https://dashboard.render.com/blueprints) →
+**New Blueprint Instance**. It names the branch, so it will not quietly build
+the default one. The only value it asks for is `WEB_ORIGIN`, which you cannot
+know until the client is deployed — set anything now and correct it after.
+
+The disk needs a paid instance type. To look around on the free tier instead,
+delete the `disk:` block and set `plan: free` on the service and the database;
+screenshots then live on an ephemeral filesystem, so a redeploy destroys the
+evidence a dispute depends on.
+
+On Railway or Fly, point the host at `apps/api/Dockerfile` with the repository
 root as the build context.
 
 Environment:
@@ -53,6 +63,19 @@ host, set one.
 Keep it to **one instance**. The realtime bus is an in-process EventEmitter, so
 a second instance silently drops events for players connected to the first. It
 needs the Socket.io Redis adapter before it scales out.
+
+### Check it came up
+
+```bash
+scripts/smoke-api.sh https://your-api-host
+```
+
+Curl only, run from anywhere that can reach the deployment. It checks what a
+deployment actually gets wrong rather than what the test suite already covers:
+the process is up, the migrations ran, the seeded configuration is readable, a
+real account registers and signs in, the token works, and an unauthenticated
+request is refused. It creates one throwaway player, so keep it to test
+deployments.
 
 ## 3. Web
 
