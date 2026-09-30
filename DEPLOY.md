@@ -52,8 +52,11 @@ Set one variable:
 
     NEXT_PUBLIC_API_URL = https://<your-api-host>
 
-It is read **at build time**. Change it and you must redeploy; get it wrong and
-you get a site that renders perfectly and cannot log in.
+It is read **at build time**. Change it and you must redeploy; setting it
+afterwards without rebuilding changes nothing. Leave it out entirely and the
+build now fails with that sentence in the log rather than shipping a site that
+renders perfectly and cannot log in — the guard is in `apps/web/next.config.js`
+and only fires on a hosted build, so local development is untouched.
 
 ---
 

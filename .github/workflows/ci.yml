@@ -61,4 +61,8 @@ jobs:
         run: npm run build --workspace=apps/api
 
       - name: Build web
+        # Inlined at build time, so a hosted build refuses to run without it —
+        # CI is checking that the bundle compiles, not talking to anything.
+        env:
+          NEXT_PUBLIC_API_URL: https://api.invalid
         run: npm run build --workspace=apps/web
