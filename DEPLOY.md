@@ -95,6 +95,19 @@ and only fires on a hosted build, so local development is untouched.
 
 ---
 
+### Check the client came up
+
+```bash
+scripts/smoke-web.sh https://your-web-host https://your-api-host
+```
+
+The second argument is the check worth running. `NEXT_PUBLIC_API_URL` is
+inlined at build time, so the script reads the deployed JavaScript and says
+which API it actually talks to — a value that is wrong, or left at localhost,
+looks perfect on the page and fails only at login. It also confirms the
+manifest, the service worker and the icon are being served, which is what
+makes the client installable.
+
 ## The installed app
 
 Nothing extra to configure: the manifest and service worker ship with the
