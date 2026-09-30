@@ -12,9 +12,18 @@ import { encodePng, scoreboardImage, scoreboardJpeg } from './png';
 import { makeUser, ULTIMATE_TEAM } from './factories';
 import { createMatch, joinMatch } from '../src/modules/matches/matches.service';
 import { uploadScreenshot } from '../src/modules/screenshots/screenshots.service';
-import { submitResult, sweepLapsedMatches } from '../src/modules/results/results.service';
+import {
+  finaliseIfPossible,
+  submitResult,
+  sweepClearedMatches,
+  sweepLapsedMatches,
+} from '../src/modules/results/results.service';
 import { drainOcrQueue } from '../src/queue/ocr-worker';
-import { findScreenshotById, listScreenshotsForMatch } from '../src/db/repos/misc.repo';
+import {
+  findScreenshotById,
+  listScreenshotsForMatch,
+  updateScreenshotAnalysis,
+} from '../src/db/repos/misc.repo';
 import { listOpenFraudFlags } from '../src/db/repos/fraud.repo';
 import { findMatchById, updateMatch } from '../src/db/repos/matches.repo';
 import { accountBalance, getWallet, reconcileWallets } from '../src/db/repos/ledger.repo';
@@ -192,6 +201,13 @@ describe('screenshot pipeline', () => {
     return SidecarOcrEngine.embed(image, ocrText).toString('base64');
   }
 
+  /** Winds the fraud review window to its end rather than sleeping through
+   *  it, then runs the sweep that pays out — the same path the worker takes. */
+  async function closeTheHold(matchId: string): Promise<string[]> {
+    await updateMatch(matchId, { settlementHoldUntil: new Date(Date.now() - 1000).toISOString() });
+    return sweepClearedMatches();
+  }
+
   it('stores evidence immutably with a content hash and queues it for analysis', async () => {
     const { creator, match } = await playersAndMatch();
     const screenshot = await uploadScreenshot(creator, {
@@ -367,7 +383,10 @@ describe('screenshot pipeline', () => {
     await drainOcrQueue();
 
     // With the evidence complete, the settlement that was waiting goes through
-    // on its own — no second report, no moderator, no stuck escrow.
+    // on its own — no second report, no moderator, no stuck escrow. At this
+    // trust level it goes through the fraud review window first.
+    expect((await findMatchById(match.id))!.settlementHoldUntil).not.toBeNull();
+    expect(await closeTheHold(match.id)).toEqual([match.id]);
     const settled = await findMatchById(match.id);
     expect(settled!.status).toBe('settled');
     expect(settled!.winnerId).toBe(creator.id);
@@ -433,6 +452,108 @@ describe('screenshot pipeline', () => {
     expect(await reconcileWallets()).toEqual([]);
   });
 
+  it('holds the payout for the policy window, then releases it', async () => {
+    const { creator, opponent, match } = await playersAndMatch(60);
+    const creatorShot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 11), FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: creatorShot.id,
+    });
+    const opponentShot = await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 12), FUT_SCREEN),
+    });
+    await submitResult(opponent, {
+      matchId: match.id,
+      selfScore: 1,
+      opponentScore: 3,
+      screenshotId: opponentShot.id,
+    });
+
+    // Both screenshots clean, both reports agreeing — and still not paid.
+    const outcome = await drainOcrQueue().then(() => finaliseIfPossible(match.id));
+    expect(outcome.status).toBe('clearing');
+    expect(outcome.match.settlementHoldUntil).not.toBeNull();
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+
+    // Re-entering during the window must not pay out early, and must not
+    // restart the clock.
+    const held = await finaliseIfPossible(match.id);
+    expect(held.status).toBe('clearing');
+    expect(held.match.settlementHoldUntil).toBe(outcome.match.settlementHoldUntil);
+    expect(await sweepClearedMatches()).toEqual([]);
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+
+    // The window closes; the sweep releases it.
+    expect(await closeTheHold(match.id)).toEqual([match.id]);
+    expect((await findMatchById(match.id))!.status).toBe('settled');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(0);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('lets a late signal stop a payout inside the window', async () => {
+    // The window exists for exactly this: evidence that arrives after both
+    // players have agreed, while the money is still in escrow.
+    const { creator, opponent, match } = await playersAndMatch(60);
+    const clean = scoreboardImage(96, 64, 13);
+    const creatorShot = await uploadScreenshot(creator, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(clean, FUT_SCREEN),
+    });
+    await submitResult(creator, {
+      matchId: match.id,
+      selfScore: 3,
+      opponentScore: 1,
+      screenshotId: creatorShot.id,
+    });
+    const opponentShot = await uploadScreenshot(opponent, {
+      matchId: match.id,
+      contentType: 'image/png',
+      dataBase64: upload(scoreboardImage(96, 64, 14), FUT_SCREEN),
+    });
+    await submitResult(opponent, {
+      matchId: match.id,
+      selfScore: 1,
+      opponentScore: 3,
+      screenshotId: opponentShot.id,
+    });
+    await drainOcrQueue();
+    expect((await finaliseIfPossible(match.id)).status).toBe('clearing');
+
+    // A moderator — or another match's analysis — condemns the evidence while
+    // the hold is running.
+    await updateScreenshotAnalysis(creatorShot.id, { verdict: 'mismatch' });
+
+    expect(await closeTheHold(match.id)).toEqual([]);
+    const after = (await findMatchById(match.id))!;
+    expect(after.status).toBe('disputed');
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
+  it('pays a high-trust pair immediately — no hold, no screenshots', async () => {
+    const { creator, opponent, match } = await playersAndMatch(90);
+    await submitResult(creator, { matchId: match.id, selfScore: 2, opponentScore: 0 });
+    const outcome = await submitResult(opponent, {
+      matchId: match.id,
+      selfScore: 0,
+      opponentScore: 2,
+    });
+
+    expect(outcome.status).toBe('settled');
+    expect(outcome.match.settlementHoldUntil).toBeNull();
+    expect(await accountBalance(matchEscrow(match.id))).toBe(0);
+    expect(await reconcileWallets()).toEqual([]);
+  });
+
   it('treats the opponent’s capture of the same scoreboard as corroboration', async () => {
     // Both players photograph one full-time screen, so the two images are
     // near-identical by design — the mid-trust rule demands both of them.
@@ -469,6 +590,7 @@ describe('screenshot pipeline', () => {
     await drainOcrQueue();
 
     expect((await findScreenshotById(opponentShot.id))!.verdict).toBe('match');
+    await closeTheHold(match.id);
     expect((await findMatchById(match.id))!.status).toBe('settled');
     expect(await listOpenFraudFlags()).toEqual([]);
     expect(await reconcileWallets()).toEqual([]);
@@ -572,9 +694,13 @@ describe('screenshot pipeline', () => {
     });
     expect(held.status).toBe('held_for_review');
 
-    // The worker analysing the last screenshot is what releases the escrow —
-    // no second report, no sweep, no player action.
+    // The worker analysing the last screenshot is what clears the match — no
+    // second report, no player action — and the hold is what still stands
+    // between it and the money.
     await drainOcrQueue();
+    expect((await findMatchById(match.id))!.settlementHoldUntil).not.toBeNull();
+    expect(await accountBalance(matchEscrow(match.id))).toBe(2000);
+    expect(await closeTheHold(match.id)).toEqual([match.id]);
 
     const settled = (await findMatchById(match.id))!;
     expect(settled.status).toBe('settled');

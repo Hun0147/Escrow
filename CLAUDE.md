@@ -80,12 +80,6 @@ way. The Pro discount is read from the **live subscription period**, not the
 cached `users.subscription_tier` flag, so a lapsed subscription stops earning it
 immediately rather than at the next renewal sweep.
 
-**`holdSeconds` is declared and never enforced.** `settlementPolicyFor()`
-returns a 60-second hold at standard trust and 300 at low, described as a fraud
-review window, and no code path reads it — auto-settlement pays out
-immediately. Either wire it into `resolveBothReports` or drop it from the
-policy; a promise the code does not keep is worse than neither.
-
 **Known tension:** charging on both settlement and withdrawal takes roughly 19%
 of a pool across a full deposit-play-withdraw cycle. That was a deliberate
 product decision, not an oversight. Splitting the rate in two (settlement vs
@@ -112,6 +106,31 @@ score can only come from the players themselves.
 - **A silent opponent escalates, it does not forfeit.** The reporting deadline
   sends the match to the moderation queue with the one report, the screenshots
   and the chat log — it never hands the reporter an automatic win.
+
+### The fraud review window
+
+`settlementPolicyFor()` returns `holdSeconds` — 60 at standard trust, 0 at
+high — and it is now enforced. Once two reports agree and the evidence passes,
+`resolveBothReports` stamps `matches.settlement_hold_until` and returns
+`clearing` instead of settling; `sweepClearedMatches()` hands each due match
+back to `finaliseIfPossible`, which re-runs *every* check before releasing
+anything. That is the point of the window: a duplicate found in another match,
+or a dispute raised in the meantime, stops the payout while the money is still
+in escrow.
+
+Three things to keep:
+
+- **The deadline is a column, not a timer.** A hold a process restart forgets
+  is not a hold, and two workers must not each start their own clock.
+- **Re-entering does not restart it, and does not pay early.** The window is
+  re-entered constantly — by the other report, by a screenshot finishing
+  analysis, by a reload.
+- **Manual review outranks the hold.** A low-trust pair goes to a moderator
+  rather than clearing first, so the 300-second hold in that band never
+  applies; it is the manual review that holds the money.
+
+The reporting-deadline sweep skips a match with a hold set: it has a payout
+time, so it is not stuck.
 
 ### Two more bugs worth not reintroducing
 
@@ -211,7 +230,7 @@ Demo accounts: `striker@` / `keeper@` / `admin@goal27.test`, password
 `goal27-demo-password`.
 
 ```bash
-npm test        # 192 tests, creates its own escrow_test database
+npm test        # 195 tests, creates its own escrow_test database
 npm run typecheck
 ```
 

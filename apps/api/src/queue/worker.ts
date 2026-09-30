@@ -1,18 +1,22 @@
 import { drainOcrQueue } from './ocr-worker';
-import { sweepLapsedMatches } from '../modules/results/results.service';
+import { sweepClearedMatches, sweepLapsedMatches } from '../modules/results/results.service';
 import { sweepRenewals } from '../modules/subscriptions/subscriptions.service';
 
 const OCR_INTERVAL_MS = 2_000;
+// The shortest hold the trust policy sets is 60 seconds, so a five-second
+// cadence keeps the payout close to the time the player was promised.
+const CLEARING_INTERVAL_MS = 5_000;
 const DEADLINE_INTERVAL_MS = 30_000;
 const RENEWAL_INTERVAL_MS = 300_000;
 
 /**
  * Background jobs.
  *
- * Two loops: drain the OCR queue, and escalate matches whose reporting window
- * has closed. Both are idempotent and safe to run in several processes at once
- * (the OCR queue claims jobs with SKIP LOCKED; the deadline sweep only touches
- * matches still in `awaiting_results`).
+ * Drain the OCR queue, release matches whose fraud review window has closed,
+ * and escalate matches whose reporting window has closed. All are idempotent
+ * and safe to run in several processes at once: the OCR queue claims jobs with
+ * SKIP LOCKED, settlement takes a row lock and refuses a second release, and
+ * the deadline sweep only touches matches still in `awaiting_results`.
  */
 export function startWorkers(): () => void {
   const timers: NodeJS.Timeout[] = [];
@@ -20,6 +24,11 @@ export function startWorkers(): () => void {
   timers.push(
     loop(OCR_INTERVAL_MS, async () => {
       await drainOcrQueue();
+    }),
+  );
+  timers.push(
+    loop(CLEARING_INTERVAL_MS, async () => {
+      await sweepClearedMatches();
     }),
   );
   timers.push(

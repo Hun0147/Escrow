@@ -71,6 +71,7 @@ export default function MatchRoomPage() {
     socket.on('match:updated', onUpdate);
     socket.on('match:ready_state', onUpdate);
     socket.on('match:settled', onUpdate);
+    socket.on('match:clearing', onUpdate);
     socket.on('match:voided', onUpdate);
     socket.on('match:disputed', onUpdate);
     socket.on('result:submitted', onUpdate);
@@ -84,6 +85,7 @@ export default function MatchRoomPage() {
       socket.off('match:updated', onUpdate);
       socket.off('match:ready_state', onUpdate);
       socket.off('match:settled', onUpdate);
+      socket.off('match:clearing', onUpdate);
       socket.off('match:voided', onUpdate);
       socket.off('match:disputed', onUpdate);
       socket.off('result:submitted', onUpdate);
@@ -114,9 +116,13 @@ export default function MatchRoomPage() {
   const myReport = results.find((result) => result.reporterId === user.id) ?? null;
   const payout = calculateSettlement(match.stakeCents, match.stakeCents, match.escrowFeeBps);
   const finished = ['settled', 'voided', 'cancelled'].includes(match.status);
+  // Agreed, verified, and counting down to payout. The clock is the promise,
+  // so it is shown as a clock rather than as a word like "processing".
+  const clearing = finished ? null : countdown(match.settlementHoldUntil);
   // A finished match has no clock and no ready state — showing either would
-  // suggest there is still something to do.
-  const deadline = finished ? null : countdown(match.reportDeadlineAt);
+  // suggest there is still something to do. Nor does a match that is already
+  // clearing: the reporting window stopped mattering when both reports landed.
+  const deadline = finished || clearing ? null : countdown(match.reportDeadlineAt);
 
   async function act(work: () => Promise<unknown>, message?: string) {
     setError(null);
@@ -136,8 +142,15 @@ export default function MatchRoomPage() {
       <section className="card mb-3 border-volt/30">
         <div className="flex items-start justify-between">
           <div>
-            <p className={`text-xs font-bold uppercase tracking-widest ${MATCH_STATUS_TONE[match.status]}`}>
-              {MATCH_STATUS_LABELS[match.status]}
+            {/* The row still reads `awaiting_results` while the hold runs, but
+                "Reporting" is the wrong thing to tell someone whose match is
+                already agreed and counting down. */}
+            <p
+              className={`text-xs font-bold uppercase tracking-widest ${
+                clearing ? 'text-volt' : MATCH_STATUS_TONE[match.status]
+              }`}
+            >
+              {clearing ? 'Clearing' : MATCH_STATUS_LABELS[match.status]}
             </p>
             <p className="mt-1 text-sm text-slate-300">{modeLabel(match.gameMode)}</p>
           </div>
@@ -164,6 +177,14 @@ export default function MatchRoomPage() {
           {describeRules(match.rules)}
           {match.rules.notes ? <span className="block text-slate-300">“{match.rules.notes}”</span> : null}
         </p>
+
+        {clearing ? (
+          <p className="mt-2 rounded-lg bg-volt/10 px-3 py-2 text-center text-xs font-semibold text-volt">
+            {clearing === 'overdue'
+              ? 'Both reports agree — paying out now.'
+              : `Both reports agree. Escrow pays out in ${clearing}.`}
+          </p>
+        ) : null}
 
         {deadline ? (
           <p className="mt-2 text-center text-xs font-semibold text-warn">
@@ -479,7 +500,8 @@ function ResultPanel({
           {alreadyReported.selfScore} – {alreadyReported.opponentScore}
         </p>
         <p className="mt-1 text-sm text-slate-400">
-          Submitted. Escrow releases as soon as your opponent’s report agrees.
+          Submitted. Escrow releases once your opponent’s report agrees and the evidence checks
+          out.
         </p>
       </section>
     );

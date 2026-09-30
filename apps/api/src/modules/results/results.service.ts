@@ -12,6 +12,7 @@ import {
   listResults,
   lockMatch,
   updateMatch,
+  findClearedMatches,
   findLapsedMatches,
 } from '../../db/repos/matches.repo';
 import { UserRow, findUserById } from '../../db/repos/users.repo';
@@ -36,7 +37,7 @@ export interface SubmitResultOutcome {
   result: MatchResult;
   match: Match;
   /** What happened once this report was in. */
-  status: 'awaiting_opponent' | 'settled' | 'held_for_review' | 'disputed';
+  status: 'awaiting_opponent' | 'settled' | 'clearing' | 'held_for_review' | 'disputed';
   detail: string;
 }
 
@@ -255,6 +256,35 @@ async function resolveBothReports(
     };
   }
 
+  // The fraud review window. Everything has agreed and verified, so the only
+  // thing left is to give a late signal — a duplicate found in another match,
+  // a report from the opponent's real account, a moderator's eye — time to
+  // land before the money is gone. It is stored on the row, not held in a
+  // timer, so a restart neither forgets it nor pays twice.
+  if (policy.holdSeconds > 0) {
+    const now = Date.now();
+    if (!match.settlementHoldUntil) {
+      const until = new Date(now + policy.holdSeconds * 1000).toISOString();
+      const holding = await updateMatch(match.id, { settlementHoldUntil: until });
+      realtime.toMatch(match.id, 'match:clearing', { matchId: match.id, payingOutAt: until });
+      return {
+        match: holding,
+        status: 'clearing',
+        detail: `Agreed and verified. Escrow pays out in ${policy.holdSeconds} seconds.`,
+      };
+    }
+    if (new Date(match.settlementHoldUntil).getTime() > now) {
+      // Re-entered during the window — by the other player's report, by a
+      // screenshot finishing analysis, by a reload. The clock does not
+      // restart, and nothing pays out early.
+      return {
+        match,
+        status: 'clearing',
+        detail: 'Agreed and verified. Escrow is clearing.',
+      };
+    }
+  }
+
   let settled;
   try {
     settled = await settleMatch({
@@ -307,6 +337,24 @@ export async function openDisputeForMatch(match: Match, raisedBy: string | null,
 }
 
 /**
+ * Pays out matches whose settlement hold has expired.
+ *
+ * The hold is a window, not a queue: this hands each due match back to
+ * `finaliseIfPossible`, which re-runs every check before releasing anything.
+ * That is the whole point — a duplicate screenshot found in the meantime, or a
+ * dispute raised during the window, stops the payout here rather than being
+ * discovered after the money has gone.
+ */
+export async function sweepClearedMatches(): Promise<string[]> {
+  const settled: string[] = [];
+  for (const match of await findClearedMatches()) {
+    const outcome = await finaliseIfPossible(match.id);
+    if (outcome.status === 'settled') settled.push(match.id);
+  }
+  return settled;
+}
+
+/**
  * Sweeps matches whose reporting window expired.
  *
  * Run by the worker on a timer. A silent opponent does not hand the reporter
@@ -319,6 +367,12 @@ export async function sweepLapsedMatches(): Promise<string[]> {
   const handled: string[] = [];
 
   for (const match of lapsed) {
+    // A match in its fraud review window is not stuck; it has a payout time.
+    if (match.settlementHoldUntil) {
+      await finaliseIfPossible(match.id);
+      continue;
+    }
+
     const reports = await listResults(match.id);
 
     if (reports.length >= 2) {

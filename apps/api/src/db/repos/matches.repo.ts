@@ -31,6 +31,9 @@ export function mapMatch(row: any): Match {
     opponentReady: row.opponent_ready,
     startedAt: row.started_at ? row.started_at.toISOString() : null,
     reportDeadlineAt: row.report_deadline_at ? row.report_deadline_at.toISOString() : null,
+    settlementHoldUntil: row.settlement_hold_until
+      ? row.settlement_hold_until.toISOString()
+      : null,
     settledAt: row.settled_at ? row.settled_at.toISOString() : null,
     createdAt: row.created_at.toISOString(),
   };
@@ -90,6 +93,7 @@ const UPDATABLE: Record<string, string> = {
   opponentReady: 'opponent_ready',
   startedAt: 'started_at',
   reportDeadlineAt: 'report_deadline_at',
+  settlementHoldUntil: 'settlement_hold_until',
   settledAt: 'settled_at',
 };
 
@@ -105,6 +109,7 @@ export interface MatchPatch {
   opponentReady?: boolean;
   startedAt?: string | null;
   reportDeadlineAt?: string | null;
+  settlementHoldUntil?: string | null;
   settledAt?: string | null;
 }
 
@@ -199,6 +204,19 @@ export async function listMatchesForUser(
      WHERE creator_id = $1 OR opponent_id = $1
      ORDER BY created_at DESC LIMIT $2`,
     [userId, limit],
+  );
+  return rows.map(mapMatch);
+}
+
+/** Matches whose settlement hold has expired and are due to pay out. */
+export async function findClearedMatches(db: Queryable = pool): Promise<Match[]> {
+  const { rows } = await db.query(
+    `SELECT * FROM matches
+     WHERE settlement_hold_until IS NOT NULL
+       AND settlement_hold_until <= now()
+       AND status NOT IN ('settled', 'voided', 'disputed')
+     ORDER BY settlement_hold_until ASC
+     LIMIT 100`,
   );
   return rows.map(mapMatch);
 }

@@ -106,7 +106,7 @@ docker run -d -p 5432:5432 \
 npm test
 ```
 
-192 tests across 13 suites, run against a real PostgreSQL rather than a stub —
+195 tests across 13 suites, run against a real PostgreSQL rather than a stub —
 the money paths are only meaningful if the transactions, row locks and
 constraints are real. Tables are truncated between cases and the seeded
 configuration is restored, so no test can leak a changed fee rate or a blocked
@@ -284,9 +284,18 @@ players' scores governs the match:
 
 | Band | Policy |
 |---|---|
-| 75+ | Auto-settle on agreement, no screenshot required |
-| 40–74 | Both screenshots required before escrow releases |
+| 75+ | Auto-settle on agreement, no screenshot required, no hold |
+| 40–74 | Both screenshots required, read and passed, then a 60-second clearing window |
 | under 40 | Both screenshots required, and a moderator rules regardless |
+
+**Agreement starts a clearing window, not a payout.** At standard trust the
+pool sits for 60 seconds after both reports agree and both screenshots come
+back clean. The deadline is a column on the match, so a restart cannot forget
+it, and the sweep that releases it re-runs every check first: a duplicate that
+surfaces in another match during the window, or a dispute raised in it, stops
+the payout while the money is still in escrow. A screenshot that has been
+uploaded but not yet *read* does not count as evidence either — settlement
+waits for the verdict.
 
 **Nothing settles on one player's word.** If the opponent never reports, the
 reporting window closes and the match goes to the moderation queue with the one

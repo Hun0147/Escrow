@@ -209,6 +209,9 @@ export interface Match {
   startedAt: string | null;
   /** Results submitted after this instant are late; the match auto-disputes. */
   reportDeadlineAt: string | null;
+  /** Agreed, verified, and clearing: escrow pays out at this instant unless
+   *  something stops it first. Null when no hold applies. */
+  settlementHoldUntil: string | null;
   settledAt: string | null;
   createdAt: string;
 }
