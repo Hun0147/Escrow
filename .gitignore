@@ -5,3 +5,7 @@ dist/
 *.log
 .evidence/
 coverage/
+# Written by `vercel link`. .vercel holds the project and org ids, and
+# .env.local holds a short-lived OIDC token — neither belongs in the history.
+.vercel
+.env*
