@@ -230,7 +230,7 @@ Demo accounts: `striker@` / `keeper@` / `admin@goal27.test`, password
 `goal27-demo-password`.
 
 ```bash
-npm test        # 195 tests, creates its own escrow_test database
+npm test        # 199 tests, creates its own escrow_test database
 npm run typecheck
 ```
 
@@ -284,4 +284,10 @@ it means anonymising the user while preserving the financial record).
 Paid entry-fee skill contests are regulated as gambling or money transmission in
 many jurisdictions. The seeded blocked-region list is a starting point for a
 compliance review, **not legal advice**. Licensing gates both hosting and any
-App Store submission. `JWT_SECRET` must be set. Evidence storage must move to S3.
+App Store submission. Evidence storage must move to S3.
+
+`JWT_SECRET` is enforced rather than documented: the API refuses to start with
+`NODE_ENV=production` unless one is set and at least 16 characters. The
+development default is in a public repository, so a deployment without its own
+secret hands anyone who reads it a valid token for any account — a silent
+failure where everything works and every wallet is open.

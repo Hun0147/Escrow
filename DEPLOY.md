@@ -23,6 +23,11 @@ transaction, tracked in `schema_migrations`.
 
 ## 2. API
 
+The image has been run exactly as the container runs it — `node
+apps/api/dist/db/migrate.js && node apps/api/dist/server.js`, against a real
+PostgreSQL, from a tree containing only the files the runtime stage copies.
+It migrates, boots, serves `/health` and answers `/config`.
+
 Render reads `render.yaml` as a blueprint (service + database + disk). On
 Railway or Fly, point the host at `apps/api/Dockerfile` with the repository
 root as the build context.
@@ -32,11 +37,18 @@ Environment:
 | Variable | Set it to |
 |---|---|
 | `DATABASE_URL` | the managed database's connection string |
-| `JWT_SECRET` | a long random value. **The development default must not survive deployment** |
+| `JWT_SECRET` | a long random value (`openssl rand -base64 48`). The API **refuses to start** in production without one, because the development default is public — see below |
 | `WEB_ORIGIN` | the Vercel URL, e.g. `https://goal27.vercel.app` — this is the CORS origin |
 | `PORT` | whatever the host expects (4000 in the blueprint) |
 | `DISCORD_BOT_TOKEN` / `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | optional; all three or DMs stay off |
 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | optional; both or payments stay on the mock provider |
+
+The refusal is deliberate. The development secret is committed to this
+repository, so a deployment that forgets to set its own would let anyone who
+reads the repo sign a valid session token for any account. Nothing about that
+failure is visible from the outside: the platform works perfectly and every
+wallet is open. The Render blueprint generates a secret for you; on another
+host, set one.
 
 Keep it to **one instance**. The realtime bus is an in-process EventEmitter, so
 a second instance silently drops events for players connected to the first. It

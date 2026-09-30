@@ -7,6 +7,13 @@ import { discordConfigured } from './discord/client';
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000;
 
+// Not fatal — an API can legitimately serve more than one origin — but a
+// production deployment that never sets it is almost always a mistake nobody
+// notices until the browser starts refusing calls.
+if (process.env.NODE_ENV === 'production' && !process.env.WEB_ORIGIN) {
+  console.warn('WEB_ORIGIN is not set: CORS is open to every origin.');
+}
+
 const server = createServer(createApp());
 attachRealtime(server);
 
