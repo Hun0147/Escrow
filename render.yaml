@@ -1,0 +1,64 @@
+# One-click blueprint for the half of Goal 27 that Vercel cannot host.
+#
+# The web client goes to Vercel; this is the API — an Express + Socket.io
+# process with background workers — plus its database. Render is not special
+# here: the Dockerfile runs the same on Railway, Fly.io or any container host.
+#
+# Configured for the free tier, which is a test deployment and not a product.
+# What that costs, so nobody is surprised:
+#
+#   - No disk. Uploaded screenshots live on an ephemeral filesystem, so a
+#     redeploy destroys the evidence a dispute depends on.
+#   - The instance sleeps after idling. Waking it takes ~30s, and while it
+#     sleeps *no background worker runs* — a settlement hold does not release
+#     and a reporting deadline does not escalate until someone wakes it with a
+#     request. Escrow is never lost, only late.
+#   - A free database expires after 30 days.
+#
+# For a real deployment: set `plan: starter` (or higher) on both, and add back
+#
+#     disk:
+#       name: evidence
+#       mountPath: /data
+#       sizeGB: 5
+#
+# which matches EVIDENCE_DIR in the Dockerfile. S3 is the real answer; the
+# disk is the stopgap.
+services:
+  - type: web
+    name: goal27-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    # This work lives on a branch. Without this, a blueprint happily builds
+    # the default branch, which has none of it.
+    branch: claude/goal-27-gaming-platform-z8vup4
+    # The realtime bus is an in-process EventEmitter. Two instances means a
+    # player connected to one never sees events published on the other, which
+    # looks exactly like flaky sockets. One instance until it uses the
+    # Socket.io Redis adapter.
+    numInstances: 1
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: goal27-db
+          property: connectionString
+      # The API refuses to start in production without this, because the
+      # development default is public. Render generates one.
+      - key: JWT_SECRET
+        generateValue: true
+      # The Vercel URL, once it exists — this is the CORS origin, so until it
+      # is right the browser blocks every call. Set it to anything now and
+      # correct it after the client deploys.
+      - key: WEB_ORIGIN
+        sync: false
+      - key: PORT
+        value: 4000
+
+databases:
+  - name: goal27-db
+    databaseName: goal27
+    user: goal27
+    plan: free

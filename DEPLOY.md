@@ -1,0 +1,184 @@
+# Deploying Goal 27
+
+Two pieces, two hosts, because they are two different kinds of program.
+
+| Piece | Where | Why |
+|---|---|---|
+| `apps/web` — Next.js client | **Vercel** | Static pages and server components; exactly what Vercel is for |
+| `apps/api` — Express + Socket.io + workers | **A container host** (Render, Railway, Fly.io) | Holds open websockets and runs timers; a serverless function does neither |
+| PostgreSQL | Managed (Render, Neon, Supabase, Railway) | The ledger is the product. It needs a real database, not a file |
+
+Vercel cannot host the API. Not a limitation to work around — a Socket.io
+connection has to live somewhere that a function invocation does not, and the
+OCR worker, reporting-deadline sweep and subscription renewals are loops on a
+clock. `apps/api/Dockerfile` runs identically on any container host.
+
+---
+
+## 1. Database
+
+Create a managed PostgreSQL 14+ and keep its connection string. Nothing else to
+do: the API applies its migrations on boot, in filename order, each in its own
+transaction, tracked in `schema_migrations`.
+
+## 2. API
+
+The image has been run exactly as the container runs it — `node
+apps/api/dist/db/migrate.js && node apps/api/dist/server.js`, against a real
+PostgreSQL, from a tree containing only the files the runtime stage copies.
+It migrates, boots, serves `/health` and answers `/config`.
+
+Render reads `render.yaml` as a blueprint (service + database + disk) at
+[dashboard.render.com/blueprints](https://dashboard.render.com/blueprints) →
+**New Blueprint Instance**. It names the branch, so it will not quietly build
+the default one. The only value it asks for is `WEB_ORIGIN`, which you cannot
+know until the client is deployed — set anything now and correct it after.
+
+It is currently configured for the **free tier**, which is a test deployment
+and not a product. Three consequences worth knowing: screenshots live on an
+ephemeral filesystem, so a redeploy destroys the evidence a dispute depends on;
+a free database expires after 30 days; and the instance sleeps when idle, which
+stops the background workers — a settlement hold does not release and a
+reporting deadline does not escalate until a request wakes it. Escrow is never
+lost, only late. `render.yaml` says what to change for a real one.
+
+On Railway or Fly, point the host at `apps/api/Dockerfile` with the repository
+root as the build context.
+
+Environment:
+
+| Variable | Set it to |
+|---|---|
+| `DATABASE_URL` | the managed database's connection string |
+| `JWT_SECRET` | a long random value (`openssl rand -base64 48`). The API **refuses to start** in production without one, because the development default is public — see below |
+| `WEB_ORIGIN` | the Vercel URL, e.g. `https://goal27.vercel.app` — this is the CORS origin |
+| `PORT` | whatever the host expects (4000 in the blueprint) |
+| `DISCORD_BOT_TOKEN` / `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | optional; all three or DMs stay off |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | optional; both or payments stay on the mock provider |
+
+The refusal is deliberate. The development secret is committed to this
+repository, so a deployment that forgets to set its own would let anyone who
+reads the repo sign a valid session token for any account. Nothing about that
+failure is visible from the outside: the platform works perfectly and every
+wallet is open. The Render blueprint generates a secret for you; on another
+host, set one.
+
+Keep it to **one instance**. The realtime bus is an in-process EventEmitter, so
+a second instance silently drops events for players connected to the first. It
+needs the Socket.io Redis adapter before it scales out.
+
+### Check it came up
+
+```bash
+scripts/smoke-api.sh https://your-api-host
+```
+
+Curl only, run from anywhere that can reach the deployment. It checks what a
+deployment actually gets wrong rather than what the test suite already covers:
+the process is up, the migrations ran, the seeded configuration is readable, a
+real account registers and signs in, the token works, and an unauthenticated
+request is refused. It creates one throwaway player, so keep it to test
+deployments.
+
+### The card-free alternative: the API as serverless functions
+
+`apps/api/api/index.ts` and `apps/api/vercel.json` deploy the same Express app
+to Vercel, with a Postgres from Neon or Supabase. It needs no card, and it is
+**not the real deployment**:
+
+- **No Socket.io.** A function holds no connection, so the lobby, chat, ready
+  state and countdowns stop updating live. Every one of those screens still
+  works on a reload — the product degrades here by design — but it is a worse
+  product.
+- **No background workers.** Nothing drains the OCR queue, releases a
+  settlement hold, or escalates a lapsed reporting deadline. Escrow is never
+  lost and nothing settles that should not; it waits.
+
+Everything that moves money still runs the same HTTP paths, transactions and
+invariants. Set `DATABASE_URL`, `JWT_SECRET`, `WEB_ORIGIN`, `WORKERS=off` and
+`MIGRATE_ON_BOOT=1` — the last lets the first cold start bring the schema up,
+which is safe because the migration runner holds a Postgres advisory lock.
+
+## 3. Web
+
+Import the repository into Vercel with the **repository root** as the root
+directory — `vercel.json` handles the rest, because `apps/web` imports the
+build output of `packages/shared` and that has to be built first.
+
+Set one variable:
+
+    NEXT_PUBLIC_API_URL = https://<your-api-host>
+
+It is read **at build time**. Change it and you must redeploy; setting it
+afterwards without rebuilding changes nothing. Leave it out entirely and the
+build now fails with that sentence in the log rather than shipping a site that
+renders perfectly and cannot log in — the guard is in `apps/web/next.config.js`
+and only fires on a hosted build, so local development is untouched.
+
+---
+
+### Check the client came up
+
+```bash
+scripts/smoke-web.sh https://your-web-host https://your-api-host
+```
+
+The second argument is the check worth running. `NEXT_PUBLIC_API_URL` is
+inlined at build time, so the script reads the deployed JavaScript and says
+which API it actually talks to — a value that is wrong, or left at localhost,
+looks perfect on the page and fails only at login. It also confirms the
+manifest, the service worker and the icon are being served, which is what
+makes the client installable.
+
+## The installed app
+
+Nothing extra to configure: the manifest and service worker ship with the
+client. Once it is on HTTPS — which Vercel gives you — a player can add Goal
+27 to their home screen and it opens full-screen with no browser chrome.
+
+Two things to know. The worker is only registered in a production build, so
+`npm run dev` never serves you a stale cache. And it caches the build's hashed
+assets and one offline page, nothing else: no API response and no non-GET
+request is ever touched, which is what makes a stale balance or a replayed
+stake impossible. When you deploy a new version, bump `VERSION` in
+`apps/web/public/sw.js` — old caches are dropped on activation by prefix.
+
+---
+
+## What is real, and what is still a stand-in
+
+Everything about the money is real. The double-entry ledger, escrow, the
+agreement-or-ruling release path, the escrow fee, trust scoring, the dispute
+queue, screenshot hashing and duplicate detection, the trust-driven settlement
+policy — all of it runs the same code the 188 tests exercise against a real
+PostgreSQL. A deployment starts with an empty database and every row in it is
+produced by someone actually using the app.
+
+Four things are stand-ins, and each one announces itself:
+
+- **Payments.** Without Stripe keys the provider is a mock: it writes a real
+  payment-intent record and confirms it, so deposits and withdrawals move real
+  ledger money, but no card is ever charged. This is the right setting for a
+  test deployment — see the warning below before changing it.
+- **Evidence storage.** Screenshots are written to disk. A container
+  filesystem is ephemeral, so without the mounted volume in `render.yaml` a
+  redeploy destroys the evidence a dispute depends on. `EvidenceStore` is two
+  methods and S3 drops straight in; do that before anyone disputes anything
+  that matters.
+- **OCR.** The default engine is a development stub that reads a text sidecar,
+  so the pipeline runs anywhere. `OCR_ENGINE=tesseract` swaps in real
+  recognition; the parsing and comparison logic is engine-independent.
+- **Email, SMS and KYC documents.** Stubs that set the flags the platform
+  reads.
+
+Do **not** run `npm run seed` against a deployment. It creates the demo players
+and fixtures for local development; a live database should start empty.
+
+## Before you take a real payment
+
+Paid entry-fee contests are regulated as gambling or money transmission in many
+jurisdictions, and the seeded blocked-region list is a starting point for a
+compliance review, not legal advice. The Stripe code has never spoken to
+Stripe — the signature checks, idempotency and reversal are tested, but the two
+REST calls were written against the docs. Exercise them against test keys
+first, and read the "Before going live" section of the README.
