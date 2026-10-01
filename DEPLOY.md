@@ -80,6 +80,25 @@ real account registers and signs in, the token works, and an unauthenticated
 request is refused. It creates one throwaway player, so keep it to test
 deployments.
 
+### The card-free alternative: the API as serverless functions
+
+`apps/api/api/index.ts` and `apps/api/vercel.json` deploy the same Express app
+to Vercel, with a Postgres from Neon or Supabase. It needs no card, and it is
+**not the real deployment**:
+
+- **No Socket.io.** A function holds no connection, so the lobby, chat, ready
+  state and countdowns stop updating live. Every one of those screens still
+  works on a reload — the product degrades here by design — but it is a worse
+  product.
+- **No background workers.** Nothing drains the OCR queue, releases a
+  settlement hold, or escalates a lapsed reporting deadline. Escrow is never
+  lost and nothing settles that should not; it waits.
+
+Everything that moves money still runs the same HTTP paths, transactions and
+invariants. Set `DATABASE_URL`, `JWT_SECRET`, `WEB_ORIGIN`, `WORKERS=off` and
+`MIGRATE_ON_BOOT=1` — the last lets the first cold start bring the schema up,
+which is safe because the migration runner holds a Postgres advisory lock.
+
 ## 3. Web
 
 Import the repository into Vercel with the **repository root** as the root
