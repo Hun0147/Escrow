@@ -34,10 +34,13 @@ Render reads `render.yaml` as a blueprint (service + database + disk) at
 the default one. The only value it asks for is `WEB_ORIGIN`, which you cannot
 know until the client is deployed — set anything now and correct it after.
 
-The disk needs a paid instance type. To look around on the free tier instead,
-delete the `disk:` block and set `plan: free` on the service and the database;
-screenshots then live on an ephemeral filesystem, so a redeploy destroys the
-evidence a dispute depends on.
+It is currently configured for the **free tier**, which is a test deployment
+and not a product. Three consequences worth knowing: screenshots live on an
+ephemeral filesystem, so a redeploy destroys the evidence a dispute depends on;
+a free database expires after 30 days; and the instance sleeps when idle, which
+stops the background workers — a settlement hold does not release and a
+reporting deadline does not escalate until a request wakes it. Escrow is never
+lost, only late. `render.yaml` says what to change for a real one.
 
 On Railway or Fly, point the host at `apps/api/Dockerfile` with the repository
 root as the build context.

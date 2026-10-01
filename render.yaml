@@ -4,17 +4,31 @@
 # process with background workers — plus its database. Render is not special
 # here: the Dockerfile runs the same on Railway, Fly.io or any container host.
 #
-# The disk below needs a paid instance type. To try this on the free tier,
-# delete the `disk:` block and set `plan: free` on both the service and the
-# database — and know what you are giving up: uploaded screenshots then live
-# on an ephemeral filesystem, so a redeploy destroys the evidence a dispute
-# depends on, and a free database expires. Neither is acceptable once real
-# money is involved; both are fine for a look around.
+# Configured for the free tier, which is a test deployment and not a product.
+# What that costs, so nobody is surprised:
+#
+#   - No disk. Uploaded screenshots live on an ephemeral filesystem, so a
+#     redeploy destroys the evidence a dispute depends on.
+#   - The instance sleeps after idling. Waking it takes ~30s, and while it
+#     sleeps *no background worker runs* — a settlement hold does not release
+#     and a reporting deadline does not escalate until someone wakes it with a
+#     request. Escrow is never lost, only late.
+#   - A free database expires after 30 days.
+#
+# For a real deployment: set `plan: starter` (or higher) on both, and add back
+#
+#     disk:
+#       name: evidence
+#       mountPath: /data
+#       sizeGB: 5
+#
+# which matches EVIDENCE_DIR in the Dockerfile. S3 is the real answer; the
+# disk is the stopgap.
 services:
   - type: web
     name: goal27-api
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     healthCheckPath: /health
@@ -26,14 +40,6 @@ services:
     # looks exactly like flaky sockets. One instance until it uses the
     # Socket.io Redis adapter.
     numInstances: 1
-    disk:
-      # Screenshots are evidence a dispute depends on. A plain container
-      # filesystem loses them on every redeploy; this is the stopgap until the
-      # EvidenceStore points at S3. The mount matches EVIDENCE_DIR in the
-      # Dockerfile.
-      name: evidence
-      mountPath: /data
-      sizeGB: 5
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -55,4 +61,4 @@ databases:
   - name: goal27-db
     databaseName: goal27
     user: goal27
-    plan: basic-256mb
+    plan: free
