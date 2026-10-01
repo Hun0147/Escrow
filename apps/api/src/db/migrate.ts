@@ -10,6 +10,24 @@ const MIGRATIONS_DIR = join(__dirname, 'migrations');
  * insert, so a failed migration leaves no partial state and no phantom record.
  */
 export async function runMigrations(log: (msg: string) => void = console.log): Promise<string[]> {
+  // Two instances booting at once would otherwise race: both read an empty
+  // schema_migrations, both try to apply 001, and one dies on a duplicate
+  // object. The lock is held on one connection for the whole run and released
+  // with it, including if the process dies.
+  const gate = await pool.connect();
+  try {
+    await gate.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_KEY]);
+    return await applyMigrations(log);
+  } finally {
+    await gate.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_KEY]).catch(() => undefined);
+    gate.release();
+  }
+}
+
+/** Arbitrary but fixed: every deployment of this app must agree on it. */
+const MIGRATION_LOCK_KEY = 2709_2027;
+
+async function applyMigrations(log: (msg: string) => void): Promise<string[]> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       name TEXT PRIMARY KEY,
