@@ -62,32 +62,39 @@ export default function SplashPage() {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-5 py-10">
       <div className="mb-8">
-        <p className="text-xs font-bold uppercase tracking-[0.3em] text-volt">PS5 · EA Sports FC</p>
-        <h1 className="mt-2 font-display text-5xl font-black leading-none tracking-tight">
-          GOAL<span className="text-volt">27</span>
+        <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.28em] text-volt">
+          <span className="dot-live" />
+          PS5 · EA Sports FC
+        </p>
+        <h1 className="mt-3 font-display text-[4.25rem] font-black leading-[0.85] tracking-[-0.045em]">
+          GOAL
+          <span className="bg-gradient-to-br from-volt to-cyanline bg-clip-text text-transparent">27</span>
         </h1>
-        <p className="mt-3 text-slate-400">
+        <p className="mt-4 text-[15px] leading-relaxed text-slate-400">
           Stake it, play it on your own console, get paid in minutes. Both stakes sit in escrow until
           you and your opponent agree on the score.
         </p>
       </div>
 
-      <div className="mb-5 grid grid-cols-3 gap-2 text-center text-[11px] text-slate-400">
-        <div className="card px-2 py-3">
-          <div className="font-display text-lg font-black text-volt">10%</div>
-          escrow fee, 7% on Pro
-        </div>
-        <div className="card px-2 py-3">
-          <div className="font-display text-lg font-black text-volt">$5+</div>
-          stake tiers
-        </div>
-        <div className="card px-2 py-3">
-          <div className="font-display text-lg font-black text-volt">18+</div>
-          verified only
-        </div>
+      {/* The three facts that decide whether someone signs up. */}
+      <div className="mb-5 grid grid-cols-3 gap-2">
+        {[
+          { value: '10%', note: 'escrow fee\n7% on Pro' },
+          { value: '$5+', note: 'stake tiers\nup to $100' },
+          { value: '18+', note: 'verified only\nregion checked' },
+        ].map((item) => (
+          <div key={item.value} className="card px-2 py-3.5 text-center">
+            <div className="money text-xl font-black text-volt">{item.value}</div>
+            <div className="mt-1.5 whitespace-pre-line text-[10px] font-semibold uppercase leading-[1.5] tracking-[0.08em] text-slate-500">
+              {item.note}
+            </div>
+          </div>
+        ))}
       </div>
 
-      <div className="mb-4 flex gap-2">
+      {/* One control, two states — a segmented switch rather than two
+          buttons that look equally pressed. */}
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-full border border-white/[0.07] bg-white/[0.03] p-1">
         {(['login', 'register'] as Mode[]).map((option) => (
           <button
             key={option}
@@ -96,7 +103,10 @@ export default function SplashPage() {
               setMode(option);
               setError(null);
             }}
-            className={`chip flex-1 py-2 ${mode === option ? 'chip-active' : ''}`}
+            className={`min-h-[40px] rounded-full text-xs font-bold uppercase tracking-[0.1em] transition
+              ${mode === option
+                ? 'bg-volt text-pitch-900 shadow-volt-glow'
+                : 'text-slate-400 hover:text-slate-200'}`}
           >
             {option === 'login' ? 'Sign in' : 'Create account'}
           </button>

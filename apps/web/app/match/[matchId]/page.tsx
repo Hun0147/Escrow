@@ -28,6 +28,18 @@ interface MatchDetail {
   policy: SettlementPolicy;
 }
 
+/** The state of the money, as a shape rather than a word in a colour. */
+const STATUS_PILL: Record<string, string> = {
+  open: 'pill-wait',
+  escrowed: 'pill-live',
+  awaiting_results: 'pill-live',
+  held_for_review: 'pill-wait',
+  disputed: 'pill-alert',
+  settled: 'pill-done',
+  voided: 'pill-done',
+  cancelled: 'pill-done',
+};
+
 export default function MatchRoomPage() {
   const params = useParams<{ matchId: string }>();
   const matchId = params.matchId;
@@ -145,13 +157,12 @@ export default function MatchRoomPage() {
             {/* The row still reads `awaiting_results` while the hold runs, but
                 "Reporting" is the wrong thing to tell someone whose match is
                 already agreed and counting down. */}
-            <p
-              className={`text-xs font-bold uppercase tracking-widest ${
-                clearing ? 'text-volt' : MATCH_STATUS_TONE[match.status]
-              }`}
-            >
+            <span className={clearing ? 'pill-live' : STATUS_PILL[match.status] ?? 'pill-done'}>
+              {clearing || match.status === 'escrowed' || match.status === 'awaiting_results' ? (
+                <span className="dot-live" />
+              ) : null}
               {clearing ? 'Clearing' : MATCH_STATUS_LABELS[match.status]}
-            </p>
+            </span>
             <p className="mt-1 text-sm text-slate-300">{modeLabel(match.gameMode)}</p>
           </div>
           <div className="text-right">

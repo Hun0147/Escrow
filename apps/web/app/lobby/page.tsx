@@ -9,7 +9,7 @@ import { formatCents, modeLabel, MATCH_STATUS_LABELS, MATCH_STATUS_TONE, relativ
 import { useRequireSession } from '../../components/SessionProvider';
 import { AppShell } from '../../components/AppShell';
 import { InstallApp } from '../../components/InstallApp';
-import { Banner, Empty, SectionTitle, Spinner, StakePill, TrustBadge } from '../../components/ui';
+import { Banner, Empty, SectionTitle, SkeletonRows, Spinner, StakePill, TrustBadge } from '../../components/ui';
 
 interface LobbyEntry {
   match: Match;
@@ -22,6 +22,17 @@ interface LobbyEntry {
 }
 
 const LIVE_STATUSES = new Set(['open', 'escrowed', 'in_progress', 'awaiting_results', 'disputed']);
+
+/** Which pill a live match wears, by what its state means for the money. */
+const LIVE_PILL: Record<string, string> = {
+  open: 'pill-wait',
+  escrowed: 'pill-live',
+  awaiting_results: 'pill-live',
+  disputed: 'pill-alert',
+  settled: 'pill-done',
+  voided: 'pill-done',
+  cancelled: 'pill-done',
+};
 
 export default function LobbyPage() {
   const { user, loading, socket } = useRequireSession();
@@ -108,15 +119,24 @@ export default function LobbyPage() {
           <SectionTitle>Your live matches</SectionTitle>
           <div className="space-y-2">
             {mine.map((match) => (
-              <Link key={match.id} href={`/match/${match.id}`} className="card flex items-center justify-between hover:border-volt/50">
-                <div>
-                  <p className={`text-xs font-bold uppercase tracking-wider ${MATCH_STATUS_TONE[match.status]}`}>
-                    {MATCH_STATUS_LABELS[match.status]}
-                  </p>
-                  <p className="text-sm text-slate-300">{modeLabel(match.gameMode)}</p>
-                  <p className="text-xs text-slate-500">{describeRules(match.rules)}</p>
+              <Link key={match.id} href={`/match/${match.id}`} className="card-interactive block">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <span className={`${LIVE_PILL[match.status] ?? 'pill-done'}`}>
+                      {match.status === 'escrowed' || match.status === 'awaiting_results' ? (
+                        <span className="dot-live" />
+                      ) : null}
+                      {MATCH_STATUS_LABELS[match.status]}
+                    </span>
+                    <p className="mt-2 font-display text-base font-black tracking-tight">
+                      {modeLabel(match.gameMode)}
+                    </p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                      {describeRules(match.rules)}
+                    </p>
+                  </div>
+                  <StakePill cents={match.stakeCents} label="stake" />
                 </div>
-                <StakePill cents={match.stakeCents} label="stake" />
               </Link>
             ))}
           </div>
@@ -153,29 +173,31 @@ export default function LobbyPage() {
         </button>
       </div>
 
+      {/* Filters scroll sideways rather than wrapping onto three rows and
+          pushing the actual matches off the screen. */}
       <div className="mb-3 space-y-2">
-        <div className="flex flex-wrap gap-2">
-          <button className={`chip ${stake === null ? 'chip-active' : ''}`} onClick={() => setStake(null)}>
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <button className={`chip shrink-0 ${stake === null ? 'chip-active' : ''}`} onClick={() => setStake(null)}>
             Any stake
           </button>
           {STAKE_TIERS_CENTS.map((cents) => (
             <button
               key={cents}
-              className={`chip ${stake === cents ? 'chip-active' : ''}`}
+              className={`chip shrink-0 ${stake === cents ? 'chip-active' : ''}`}
               onClick={() => setStake(cents)}
             >
               {formatCents(cents)}
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button className={`chip ${mode === null ? 'chip-active' : ''}`} onClick={() => setMode(null)}>
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <button className={`chip shrink-0 ${mode === null ? 'chip-active' : ''}`} onClick={() => setMode(null)}>
             All modes
           </button>
           {GAME_MODES.map((option) => (
             <button
               key={option}
-              className={`chip ${mode === option ? 'chip-active' : ''}`}
+              className={`chip shrink-0 ${mode === option ? 'chip-active' : ''}`}
               onClick={() => setMode(option)}
             >
               {modeLabel(option)}
@@ -193,7 +215,7 @@ export default function LobbyPage() {
       <SectionTitle>Open matches</SectionTitle>
 
       {fetching ? (
-        <Spinner label="Loading the lobby" />
+        <SkeletonRows rows={3} />
       ) : entries.length === 0 ? (
         <Empty
           title="Nothing at these filters"
@@ -207,26 +229,45 @@ export default function LobbyPage() {
       ) : (
         <div className="space-y-2">
           {entries.map((entry) => (
-            <article key={entry.match.id} className="card">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate font-display font-bold">{entry.creatorHandle}</p>
-                    <TrustBadge score={entry.creatorTrustScore} />
+            <article key={entry.match.id} className="card-interactive">
+              {/* Who, how trusted, and at what stake — in that order, because
+                  that is the order a player decides in. */}
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <TrustBadge score={entry.creatorTrustScore} />
+                  <div className="min-w-0">
+                    <p className="truncate font-display text-base font-black tracking-tight">
+                      {entry.creatorHandle}
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-500">
+                      {entry.creatorWins}W–{entry.creatorLosses}L · {entry.creatorSkillTier.replace('_', '-')} ·{' '}
+                      {relativeTime(entry.match.createdAt)}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    {entry.creatorWins}W–{entry.creatorLosses}L · {entry.creatorSkillTier.replace('_', '-')} ·{' '}
-                    {relativeTime(entry.match.createdAt)}
-                  </p>
-                  <p className="mt-2 text-sm text-slate-300">{modeLabel(entry.match.gameMode)}</p>
-                  <p className="text-xs text-slate-500">{describeRules(entry.match.rules)}</p>
                 </div>
                 <StakePill cents={entry.match.stakeCents} label="each" />
               </div>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <p className="text-xs text-slate-500">
-                  Winner takes {formatCents(entry.match.stakeCents * 2 - Math.round((entry.match.stakeCents * 2 * entry.match.escrowFeeBps) / 10000))}
-                </p>
+
+              <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                <span className="pill-done border-cyanline/25 bg-cyanline/[0.07] text-cyanline">
+                  {modeLabel(entry.match.gameMode)}
+                </span>
+                <span className="pill-done normal-case tracking-normal text-slate-400">
+                  {describeRules(entry.match.rules)}
+                </span>
+              </div>
+
+              <div className="my-3 rule" />
+
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500">
+                    Winner takes
+                  </p>
+                  <p className="money text-lg font-black text-slate-100">
+                    {formatCents(entry.match.stakeCents * 2 - Math.round((entry.match.stakeCents * 2 * entry.match.escrowFeeBps) / 10000))}
+                  </p>
+                </div>
                 <button className="btn-primary" disabled={blocked || busy} onClick={() => join(entry.match.id)}>
                   Join for {formatCents(entry.match.stakeCents)}
                 </button>

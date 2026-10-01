@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { formatCents } from '../lib/format';
 import { useSession } from './SessionProvider';
+import { BellIcon, PitchIcon, PlayerIcon, RanksIcon, TrophyIcon, WalletIcon } from './icons';
 
 interface SessionReminder {
   elapsedMinutes: number;
@@ -12,11 +13,11 @@ interface SessionReminder {
 }
 
 const NAV = [
-  { href: '/lobby', label: 'Lobby', glyph: '⚽' },
-  { href: '/tournaments', label: 'Cups', glyph: '🏆' },
-  { href: '/wallet', label: 'Wallet', glyph: '💳' },
-  { href: '/leaderboards', label: 'Ranks', glyph: '📊' },
-  { href: '/profile', label: 'You', glyph: '👤' },
+  { href: '/lobby', label: 'Lobby', Icon: PitchIcon },
+  { href: '/tournaments', label: 'Cups', Icon: TrophyIcon },
+  { href: '/wallet', label: 'Wallet', Icon: WalletIcon },
+  { href: '/leaderboards', label: 'Ranks', Icon: RanksIcon },
+  { href: '/profile', label: 'You', Icon: PlayerIcon },
 ];
 
 /**
@@ -45,41 +46,63 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col">
-      <header className="sticky top-0 z-20 border-b border-pitch-600 bg-pitch-900/95 backdrop-blur">
-        <div className="flex items-center justify-between px-4 py-3">
-          <Link href="/lobby" className="flex min-h-[44px] items-center font-display text-lg font-black tracking-tight">
-            GOAL<span className="text-volt">27</span>
+      <header className="sticky top-0 z-20 border-b border-white/[0.07] bg-pitch-900/80 backdrop-blur-xl">
+        <div className="flex items-center justify-between gap-3 px-4 py-3">
+          <Link href="/lobby" className="flex min-h-[44px] items-center gap-2">
+            <span className="font-display text-lg font-black tracking-[-0.02em]">
+              GOAL<span className="text-volt">27</span>
+            </span>
           </Link>
 
-          <div className="flex items-center gap-3">
-            <Link href="/profile" className="tap relative text-xl" aria-label="Notifications">
-              🔔
+          <div className="flex items-center gap-1">
+            <Link href="/profile" className="tap relative text-slate-400 hover:text-slate-100" aria-label="Notifications">
+              <BellIcon />
               {unread > 0 ? (
-                <span className="absolute -right-1 -top-1 rounded-full bg-volt px-1.5 text-[10px] font-black text-pitch-900">
-                  {unread}
+                <span
+                  className="absolute right-1.5 top-1.5 flex h-4 min-w-[16px] items-center justify-center
+                             rounded-full bg-volt px-1 text-[10px] font-black text-pitch-900"
+                >
+                  {unread > 9 ? '9+' : unread}
                 </span>
               ) : null}
             </Link>
-            <Link href="/wallet" className="flex min-h-[44px] flex-col justify-center text-right leading-tight">
-              <div className="font-display text-xl font-black tabular-nums text-volt">
-                {formatCents(wallet?.availableCents ?? 0)}
+
+            {/* The money, never more than a glance away. */}
+            <Link
+              href="/wallet"
+              className="group flex min-h-[44px] items-center gap-2.5 rounded-xl border border-white/[0.07]
+                         bg-white/[0.04] py-1.5 pl-3 pr-3 transition hover:border-volt/30"
+            >
+              <div className="text-right leading-none">
+                <div className="money text-xl font-black text-volt">
+                  {formatCents(wallet?.availableCents ?? 0)}
+                </div>
+                <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                  Available
+                </div>
               </div>
               {wallet && wallet.lockedCents > 0 ? (
-                <div className="text-[11px] tabular-nums text-slate-400">
-                  {formatCents(wallet.lockedCents)} in escrow
+                <div className="border-l border-white/10 pl-2.5 text-left leading-none">
+                  <div className="money text-sm font-bold text-cyanline">
+                    {formatCents(wallet.lockedCents)}
+                  </div>
+                  <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                    Escrow
+                  </div>
                 </div>
-              ) : (
-                <div className="text-[11px] uppercase tracking-wider text-slate-500">Available</div>
-              )}
+              ) : null}
             </Link>
           </div>
         </div>
+
         {user?.role !== 'player' ? (
           <Link
             href="/admin"
-            className="block bg-pitch-700 px-4 py-1.5 text-center text-xs font-semibold text-cyanline"
+            className="flex items-center justify-center gap-2 border-t border-white/[0.06]
+                       bg-cyanline/[0.07] px-4 py-1.5 text-center text-[11px] font-bold
+                       uppercase tracking-[0.12em] text-cyanline"
           >
-            Staff view — open the moderation queue
+            Staff view — moderation queue
           </Link>
         ) : null}
       </header>
@@ -116,7 +139,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </main>
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl border-t border-pitch-600 bg-pitch-900/95 backdrop-blur"
+        className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full max-w-2xl border-t border-white/[0.07]
+                   bg-pitch-900/85 backdrop-blur-xl"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
         <div className="grid grid-cols-5">
@@ -126,12 +150,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex min-h-[56px] flex-col items-center justify-center gap-0.5 py-2
-                  text-[11px] font-semibold ${active ? 'text-volt' : 'text-slate-500'}`}
+                aria-current={active ? 'page' : undefined}
+                className={`relative flex min-h-[56px] flex-col items-center justify-center gap-1 py-2
+                  text-[10px] font-bold uppercase tracking-[0.08em] transition
+                  ${active ? 'text-volt' : 'text-slate-500 hover:text-slate-300'}`}
               >
-                <span className="text-lg" aria-hidden>
-                  {item.glyph}
-                </span>
+                {/* The active tab is lit from the top edge, like a tunnel. */}
+                {active ? (
+                  <span className="absolute inset-x-5 top-0 h-px bg-volt shadow-[0_0_12px_2px_rgba(61,255,154,0.6)]" />
+                ) : null}
+                <item.Icon />
                 {item.label}
               </Link>
             );

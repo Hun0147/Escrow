@@ -1,4 +1,5 @@
 import './globals.css';
+import { body, display } from './fonts';
 import { SessionProvider } from '../components/SessionProvider';
 import { ServiceWorker } from '../components/InstallApp';
 
@@ -36,7 +37,7 @@ export const viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${display.variable} ${body.variable}`}>
       <body>
         <SessionProvider>{children}</SessionProvider>
         <ServiceWorker />
